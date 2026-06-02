@@ -455,7 +455,7 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       // Step1: attachment_id取得
       const formData1 = new FormDataLib();
       formData1.append('message', JSON.stringify({
-        attachment: { type: attachmentType, payload: { is_reusable: true } }
+        attachment: { type: attachmentType, payload: {} }
       }));
       formData1.append('filedata', req.file.buffer, {
         filename: req.file.originalname,
