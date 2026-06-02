@@ -4,7 +4,8 @@ const app = express();
 app.use(express.json());
 
 // Firebase初期化
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+const rawKey = process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\n/g, '\\n');
+const serviceAccount = JSON.parse(rawKey);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
