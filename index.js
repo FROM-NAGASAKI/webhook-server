@@ -544,8 +544,10 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       const formData = new FormDataLib();
       const attachmentType = getAttachmentType(req.file.mimetype);
 
-      formData.append('recipient', `{"id":"${senderId}"}`);
-      formData.append('message', `{"attachment":{"type":"${attachmentType}","payload":{"is_reusable":false}}}`);
+      const recipientJson = JSON.stringify({ id: String(senderId) });
+      const messageJson = JSON.stringify({ attachment: { type: attachmentType, payload: { is_reusable: false } } });
+      formData.append('recipient', recipientJson, { contentType: 'application/json' });
+      formData.append('message', messageJson, { contentType: 'application/json' });
       formData.append('filedata', req.file.buffer, {
         filename: req.file.originalname,
         contentType: req.file.mimetype
