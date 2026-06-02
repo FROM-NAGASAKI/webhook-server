@@ -516,7 +516,10 @@ app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
 
 // 返信API（テキスト＋ファイル対応）
 app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
-  const { docId, senderId, message } = req.body;
+  const docId = req.body.docId;
+  const senderId = req.body.senderId;
+  const message = req.body.message;
+  console.log('受信データ:', { docId, senderId, message, file: req.file?.originalname });
   try {
     // テキスト返信
     if (message && message.trim()) {
