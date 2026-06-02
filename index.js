@@ -81,19 +81,33 @@ async function sendMessage(recipientId, text) {
 // 添付ファイル表示HTML生成
 function attachmentHtml(d) {
   if (!d.attachmentName) return '';
-  if (d.attachmentType === 'image' && d.attachmentUrl) {
-    const safeUrl = d.attachmentUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    return `<div style="margin-top:8px;">
-      <img src="${safeUrl}" alt="${d.attachmentName}"
-        style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
-        onclick="window.open(this.src,'_blank')"
-        onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-      <div style="display:none;background:#f0f0f0;padding:8px;border-radius:4px;font-size:13px;">
-        🖼️ ${d.attachmentName}
+  if (d.attachmentType === 'image') {
+    if (d.attachmentUrl) {
+      // URLをBase64エンコードしてdata属性に格納
+      const encodedUrl = Buffer.from(d.attachmentUrl).toString('base64');
+      return `<div style="margin-top:8px;">
+        <img data-src="${encodedUrl}"
+          alt="${d.attachmentName}"
+          style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+        <div style="display:none;background:#f0f0f0;padding:8px;border-radius:4px;font-size:13px;">
+          🖼️ ${d.attachmentName}
+        </div>
       </div>
-    </div>`;
+      <script>
+        (function(){
+          var imgs=document.querySelectorAll('img[data-src]');
+          imgs.forEach(function(img){
+            var url=atob(img.getAttribute('data-src'));
+            img.src=url;
+            img.onclick=function(){window.open(url,'_blank');};
+          });
+        })();
+      </script>`;
+    }
+    return `<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">🖼️ ${d.attachmentName}</div>`;
   }
-  const icon = d.attachmentType === 'image' ? '🖼️' : d.attachmentType === 'video' ? '🎥' : d.attachmentType === 'audio' ? '🎵' : '📄';
+  const icon = d.attachmentType === 'video' ? '🎥' : d.attachmentType === 'audio' ? '🎵' : '📄';
   return `<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">
     ${icon} ${d.attachmentName}
   </div>`;
