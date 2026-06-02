@@ -4,9 +4,17 @@ const crypto = require('crypto');
 const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
+const session = require('express-session');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(session({
+  secret: 'from-nagasaki-secret-2024',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 8 * 60 * 60 * 1000 } // 8時間
+}));
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
@@ -19,35 +27,10 @@ function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-async function basicAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Basic ')) {
-    res.set('WWW-Authenticate', 'Basic realm="Admin"');
-    return res.status(401).send('認証が必要です');
-  }
-  const base64 = authHeader.slice(6);
-  const decoded = Buffer.from(base64, 'base64').toString('utf-8');
-  const [id, pass] = decoded.split(':');
-
-  const snapshot = await db.collection('admins').where('userId', '==', id).get();
-  if (!snapshot.empty) {
-    const adminData = snapshot.docs[0].data();
-    if (adminData.password === hashPassword(pass)) {
-      req.adminId = id;
-      req.adminDisplayName = adminData.displayName || id;
-      req.adminSignature = adminData.signature || '';
-      return next();
-    }
-  }
-
-  const allAdmins = await db.collection('admins').get();
-  if (allAdmins.empty && id === 'from-nagasaki-admin' && pass === 'fngs-4301') {
-    req.adminId = id; req.adminDisplayName = id; req.adminSignature = '';
-    return next();
-  }
-
-  res.set('WWW-Authenticate', 'Basic realm="Admin"');
-  return res.status(401).send('IDまたはパスワードが違います');
+// セッション認証ミドルウェア
+async function requireAuth(req, res, next) {
+  if (req.session && req.session.adminId) return next();
+  res.redirect('/login');
 }
 
 async function getSenderName(senderId) {
@@ -78,7 +61,6 @@ async function sendMessage(recipientId, text) {
   } catch (err) { console.error('テキスト返信失敗:', err); }
 }
 
-// 添付ファイル表示HTML生成
 function attachmentHtml(d) {
   if (!d.attachmentName) return '';
   if (d.attachmentType === 'image' && d.attachmentUrl) {
@@ -100,11 +82,13 @@ function attachmentHtml(d) {
   return '<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">' + icon + ' ' + d.attachmentName + '</div>';
 }
 
-function navHtml() {
-  return `<nav>
+function navHtml(adminName) {
+  return `<nav style="display:flex;align-items:center;gap:4px;">
     <a href="/admin">📋 問い合わせ</a>
     <a href="/admin/contacts">👥 ユーザー履歴</a>
     <a href="/admin/users">👤 管理者</a>
+    <span style="margin-left:16px;font-size:13px;opacity:0.8;">${adminName || ''}</span>
+    <a href="/logout" style="margin-left:8px;background:rgba(231,76,60,0.7);">🚪 ログアウト</a>
   </nav>`;
 }
 
@@ -113,13 +97,79 @@ function commonCss() {
     body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
     header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
     header h1 { margin: 0; font-size: 20px; }
-    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
+    nav a { color:white; text-decoration:none; margin-left:8px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
     nav a:hover { background:rgba(255,255,255,0.25); }
     .container { padding: 24px; }`;
 }
 
+// ログイン画面
+app.get('/login', (req, res) => {
+  if (req.session && req.session.adminId) return res.redirect('/admin');
+  const error = req.query.error ? '<p style="color:#e74c3c;margin-bottom:16px;">IDまたはパスワードが違います</p>' : '';
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ログイン</title>
+  <style>
+    body{font-family:sans-serif;margin:0;background:#2c3e50;display:flex;justify-content:center;align-items:center;min-height:100vh;}
+    .card{background:white;border-radius:12px;padding:40px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.3);}
+    h1{margin:0 0 8px;color:#2c3e50;font-size:22px;text-align:center;}
+    .subtitle{text-align:center;color:#888;font-size:14px;margin-bottom:28px;}
+    label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
+    input{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;margin-bottom:16px;}
+    input:focus{outline:none;border-color:#2980b9;box-shadow:0 0 0 2px rgba(41,128,185,0.2);}
+    button{width:100%;padding:12px;background:#2c3e50;color:white;border:none;border-radius:6px;font-size:15px;cursor:pointer;font-weight:bold;}
+    button:hover{background:#34495e;}
+  </style></head><body>
+  <div class="card">
+    <h1>📋 管理画面</h1>
+    <p class="subtitle">From 連絡ツール</p>
+    ${error}
+    <form method="POST" action="/login">
+      <label>ユーザーID</label>
+      <input type="text" name="userId" placeholder="ユーザーIDを入力" required autofocus>
+      <label>パスワード</label>
+      <input type="password" name="password" placeholder="パスワードを入力" required>
+      <button type="submit">ログイン</button>
+    </form>
+  </div>
+  </body></html>`);
+});
+
+// ログイン処理
+app.post('/login', async (req, res) => {
+  const { userId, password } = req.body;
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', userId).get();
+    if (!snapshot.empty) {
+      const adminData = snapshot.docs[0].data();
+      if (adminData.password === hashPassword(password)) {
+        req.session.adminId = userId;
+        req.session.adminDisplayName = adminData.displayName || userId;
+        req.session.adminSignature = adminData.signature || '';
+        return res.redirect('/admin');
+      }
+    }
+    // 初期管理者フォールバック
+    const allAdmins = await db.collection('admins').get();
+    if (allAdmins.empty && userId === 'from-nagasaki-admin' && password === 'fngs-4301') {
+      req.session.adminId = userId;
+      req.session.adminDisplayName = userId;
+      req.session.adminSignature = '';
+      return res.redirect('/admin');
+    }
+    res.redirect('/login?error=1');
+  } catch (err) {
+    console.error('ログインエラー:', err);
+    res.redirect('/login?error=1');
+  }
+});
+
+// ログアウト
+app.get('/logout', (req, res) => {
+  req.session.destroy();
+  res.redirect('/login');
+});
+
 // 問い合わせ一覧
-app.get('/admin', basicAuth, async (req, res) => {
+app.get('/admin', requireAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').limit(100).get();
   const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
   const profileMap = {};
@@ -138,14 +188,12 @@ app.get('/admin', basicAuth, async (req, res) => {
     const workplace = profile.workplace || '―';
     const residenceStatus = profile.residenceStatus || '―';
     const searchData = [name, d.message || '', profile.passportName || '', workplace, residenceStatus].join(' ').toLowerCase();
-
     let replyHtml = '―';
     if (d.replyMessage) replyHtml = d.replyMessage.replace(/\n/g, '<br>');
     if (d.attachmentName) {
       const icon = d.attachmentType === 'image' ? '🖼️' : '📄';
-      replyHtml += `<br><span style="font-size:12px;color:#2980b9;">${icon} ${d.attachmentName}</span>`;
+      replyHtml += '<br><span style="font-size:12px;color:#2980b9;">' + icon + ' ' + d.attachmentName + '</span>';
     }
-
     return `
       <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
         <td>${date}</td>
@@ -188,7 +236,7 @@ app.get('/admin', basicAuth, async (req, res) => {
     td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:top;max-width:180px;word-break:break-all;}
     tr.msg-row:hover td{background:#f9f9f9;} .hidden{display:none !important;}
   </style></head><body>
-  <header><h1>📋 問い合わせ管理画面</h1>${navHtml()}</header>
+  <header><h1>📋 問い合わせ管理画面</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container" style="overflow-x:auto;">
     <div class="search-bar">
       <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
@@ -247,7 +295,7 @@ app.get('/admin', basicAuth, async (req, res) => {
 });
 
 // ユーザー一覧
-app.get('/admin/contacts', basicAuth, async (req, res) => {
+app.get('/admin/contacts', requireAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
   const users = {};
   snapshot.docs.forEach(doc => {
@@ -275,13 +323,13 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ユーザー履歴</title>
   <style>${commonCss()} table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
   th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:14px 16px;border-bottom:1px solid #eee;} tr:hover td{background:#f0f7ff;}</style>
-  </head><body><header><h1>👥 ユーザー履歴</h1>${navHtml()}</header>
+  </head><body><header><h1>👥 ユーザー履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container"><table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>
   <tbody>${rows}</tbody></table></div></body></html>`);
 });
 
 // ユーザー詳細
-app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
+app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
   const senderId = req.params.senderId;
   const [msgSnapshot, contactDoc] = await Promise.all([
     db.collection('messages').where('senderId', '==', senderId).orderBy('createdAt', 'asc').get(),
@@ -298,25 +346,21 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-
     let html = `<div style="display:flex;justify-content:flex-start;margin-bottom:16px;"><div style="max-width:60%;">
       <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
       <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">${d.message || ''}</div>
       <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
     </div></div>`;
-
     if (d.replyMessage || d.attachmentName) {
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
-      const replyText = d.replyMessage ? `<div style="white-space:pre-wrap;">${d.replyMessage}</div>` : '';
-      const attachHtml = attachmentHtml(d);
+      const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
       html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:60%;">
         <div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">${d.replyAdmin || '管理者'} · ${repliedAt}</div>
         <div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
-          ${replyText}${attachHtml}
+          ${replyText}${attachmentHtml(d)}
         </div>
       </div></div>`;
     }
-
     if (status === '未対応') {
       html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:70%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">
         <textarea id="text-${doc.id}" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>
@@ -344,7 +388,7 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}
     button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}
   </style></head><body>
-  <header><h1>💬 ${senderName} の履歴</h1>${navHtml()}</header>
+  <header><h1>💬 ${senderName} の履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container">
     <div class="card"><div class="user-info">
       <div><div class="label">名前</div><div class="value">${senderName}</div></div>
@@ -398,7 +442,7 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
 });
 
 // プロフィール保存API
-app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
+app.post('/admin/contacts/:senderId/profile', requireAuth, async (req, res) => {
   const { senderId } = req.params;
   const { passportName, workplace, residenceStatus, entryDate } = req.body;
   try {
@@ -408,95 +452,73 @@ app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
 });
 
 // 返信API
-app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
+app.post('/admin/reply', requireAuth, upload.single('file'), async (req, res) => {
   const docId = req.body.docId;
   const senderId = req.body.senderId;
   const message = req.body.message;
-  console.log('受信データ:', { docId, senderId, message, file: req.file?.originalname });
+  const adminId = req.session.adminId;
+  const adminDisplayName = req.session.adminDisplayName;
+  const adminSignature = req.session.adminSignature;
 
   try {
-    // テキスト返信
     if (message && message.trim()) {
       let fullMessage = message;
-      if (req.adminSignature) fullMessage = message + '\n\n' + req.adminSignature;
+      if (adminSignature) fullMessage = message + '\n\n' + adminSignature;
       await sendMessage(senderId, fullMessage);
       await db.collection('messages').doc(docId).update({
         status: '対応済み',
         repliedAt: admin.firestore.FieldValue.serverTimestamp(),
         replyMessage: fullMessage,
-        replyAdmin: req.adminDisplayName || req.adminId
+        replyAdmin: adminDisplayName || adminId
       });
     }
 
-    // ファイル送信
     if (req.file) {
       const attachmentType = getAttachmentType(req.file.mimetype);
-      console.log('ファイル送信中:', req.file.originalname, attachmentType, senderId);
-
       const formData1 = new FormData();
       formData1.append('recipient', JSON.stringify({ id: senderId }));
-      formData1.append('message', JSON.stringify({
-        attachment: { type: attachmentType, payload: { is_reusable: false } }
-      }));
-      formData1.append('filedata', req.file.buffer, {
-        filename: req.file.originalname,
-        contentType: req.file.mimetype
-      });
+      formData1.append('message', JSON.stringify({ attachment: { type: attachmentType, payload: { is_reusable: false } } }));
+      formData1.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
 
       const axiosRes = await axios.post(
         `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-        formData1,
-        { headers: formData1.getHeaders() }
+        formData1, { headers: formData1.getHeaders() }
       );
-      console.log('ファイル送信結果:', JSON.stringify(axiosRes.data));
 
       if (axiosRes.data.message_id) {
-        // 画像URLをGraph APIから取得
         let attachmentUrl = null;
         if (attachmentType === 'image') {
           try {
-            const msgId = axiosRes.data.message_id;
-            const urlRes = await fetch(
-              `https://graph.facebook.com/v19.0/${msgId}/attachments?access_token=${PAGE_ACCESS_TOKEN}`
-            );
+            const urlRes = await fetch(`https://graph.facebook.com/v19.0/${axiosRes.data.message_id}/attachments?access_token=${PAGE_ACCESS_TOKEN}`);
             const urlData = await urlRes.json();
-            console.log('画像URL取得:', JSON.stringify(urlData));
             if (urlData.data && urlData.data[0] && urlData.data[0].image_data) {
               attachmentUrl = urlData.data[0].image_data.url;
             }
-          } catch (urlErr) {
-            console.error('URL取得失敗:', urlErr);
-          }
+          } catch (e) { console.error('URL取得失敗:', e); }
         }
-
         const updateData = {
           status: '対応済み',
           repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-          replyAdmin: req.adminDisplayName || req.adminId,
+          replyAdmin: adminDisplayName || adminId,
           attachmentName: req.file.originalname,
-          attachmentType: attachmentType
+          attachmentType
         };
         if (attachmentUrl) updateData.attachmentUrl = attachmentUrl;
-        if (!message || !message.trim()) {
-          updateData.replyMessage = `[添付ファイル: ${req.file.originalname}]`;
-        }
+        if (!message || !message.trim()) updateData.replyMessage = `[添付ファイル: ${req.file.originalname}]`;
         await db.collection('messages').doc(docId).update(updateData);
       } else {
-        console.error('ファイル送信エラー:', axiosRes.data);
         return res.json({ success: false, error: 'ファイル送信失敗: ' + JSON.stringify(axiosRes.data) });
       }
     }
-
     res.json({ success: true });
   } catch (err) {
     const errMsg = err.response ? JSON.stringify(err.response.data) : err.message;
-    console.error('返信エラー:', errMsg);
     res.json({ success: false, error: errMsg });
   }
 });
 
 // 管理者一覧
-app.get('/admin/users', basicAuth, async (req, res) => {
+app.get('/admin/users', requireAuth, async (req, res) => {
   const snapshot = await db.collection('admins').orderBy('createdAt', 'desc').get();
   const rows = snapshot.docs.map(doc => {
     const d = doc.data();
@@ -516,7 +538,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
   button.add{background:#27ae60;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;}
   .msg{margin-top:12px;font-weight:bold;} .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:700px;}
   label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}</style></head><body>
-  <header><h1>👤 管理者管理</h1>${navHtml()}</header>
+  <header><h1>👤 管理者管理</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container">
     <div class="card"><h2 style="margin-top:0;">管理者を追加</h2>
       <div class="form-grid">
@@ -552,7 +574,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
 });
 
 // 管理者追加API
-app.post('/admin/users/add', basicAuth, async (req, res) => {
+app.post('/admin/users/add', requireAuth, async (req, res) => {
   const { userId, password, displayName, signature } = req.body;
   try {
     const existing = await db.collection('admins').where('userId', '==', userId).get();
@@ -563,7 +585,7 @@ app.post('/admin/users/add', basicAuth, async (req, res) => {
 });
 
 // 管理者削除API
-app.post('/admin/users/delete', basicAuth, async (req, res) => {
+app.post('/admin/users/delete', requireAuth, async (req, res) => {
   const { docId } = req.body;
   try {
     await db.collection('admins').doc(docId).delete();
