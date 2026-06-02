@@ -77,18 +77,6 @@ async function sendMessage(recipientId, text) {
   } catch (err) { console.error('テキスト返信失敗:', err); }
 }
 
-async function sendAttachment(recipientId, attachmentId, attachmentType) {
-  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
-  const response = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: recipientId },
-      message: { attachment: { type: attachmentType, payload: { attachment_id: attachmentId } } }
-    })
-  });
-  return await response.json();
-}
-
 function navHtml() {
   return `<nav>
     <a href="/admin">📋 問い合わせ</a>
@@ -110,7 +98,6 @@ function commonCss() {
 // 問い合わせ一覧
 app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').limit(100).get();
-
   const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
@@ -135,22 +122,15 @@ app.get('/admin', basicAuth, async (req, res) => {
       <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
         <td>${date}</td>
         <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;">${name}</a></td>
-        <td>${workplace}</td>
-        <td>${residenceStatus}</td>
+        <td>${workplace}</td><td>${residenceStatus}</td>
         <td>${d.message || ''}</td>
-        <td>${replyMessage}</td>
-        <td>${replyAdmin}</td>
+        <td>${replyMessage}</td><td>${replyAdmin}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
-        <td>
-          <button onclick="openReply('${doc.id}')"
-            style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>
-        </td>
+        <td><button onclick="openReply('${doc.id}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>
       </tr>
       <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
         <td colspan="9" style="padding:12px;">
-          <textarea id="text-${doc.id}" rows="3"
-            style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
-            placeholder="返信メッセージを入力（任意）..."></textarea>
+          <textarea id="text-${doc.id}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
           <br>
           <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
             <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
@@ -159,98 +139,82 @@ app.get('/admin', basicAuth, async (req, res) => {
           </div>
           <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
           <div style="margin-top:10px;">
-            <button onclick="sendReply('${doc.id}', '${d.senderId}')"
-              style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
-            <button onclick="closeReply('${doc.id}')"
-              style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
+            <button onclick="sendReply('${doc.id}','${d.senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
+            <button onclick="closeReply('${doc.id}')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
             <span id="result-${doc.id}" style="margin-left:12px;font-weight:bold;"></span>
           </div>
         </td>
       </tr>`;
   }).join('');
 
-  res.send(`<!DOCTYPE html>
-<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>問い合わせ管理画面</title>
-<style>
-  ${commonCss()}
-  .search-bar{background:white;border-radius:8px;padding:16px 20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
-  .search-bar input[type=text]{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:280px;outline:none;}
-  .search-bar input[type=text]:focus{border-color:#2980b9;box-shadow:0 0 0 2px rgba(41,128,185,0.2);}
-  .search-bar select{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;outline:none;}
-  .search-bar button{padding:9px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px;}
-  .btn-clear{background:#ecf0f1;color:#555;}
-  .search-count{color:#666;font-size:14px;}
-  table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);min-width:1100px;}
-  th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;white-space:nowrap;}
-  td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:top;max-width:180px;word-break:break-all;}
-  tr.msg-row:hover td{background:#f9f9f9;}
-  .hidden{display:none !important;}
-</style></head><body>
-<header><h1>📋 問い合わせ管理画面</h1>${navHtml()}</header>
-<div class="container" style="overflow-x:auto;">
-  <div class="search-bar">
-    <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
-    <select id="statusFilter" onchange="filterRows()">
-      <option value="">すべてのステータス</option>
-      <option value="未対応">未対応</option>
-      <option value="対応済み">対応済み</option>
-    </select>
-    <button class="btn-clear" onclick="clearSearch()">✕ クリア</button>
-    <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
-  </div>
-  <table>
-    <thead><tr>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>問い合わせ管理画面</title>
+  <style>${commonCss()}
+    .search-bar{background:white;border-radius:8px;padding:16px 20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+    .search-bar input[type=text]{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:280px;outline:none;}
+    .search-bar select{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;outline:none;}
+    .search-bar button{padding:9px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px;}
+    .btn-clear{background:#ecf0f1;color:#555;} .search-count{color:#666;font-size:14px;}
+    table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);min-width:1100px;}
+    th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;white-space:nowrap;}
+    td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:top;max-width:180px;word-break:break-all;}
+    tr.msg-row:hover td{background:#f9f9f9;} .hidden{display:none !important;}
+  </style></head><body>
+  <header><h1>📋 問い合わせ管理画面</h1>${navHtml()}</header>
+  <div class="container" style="overflow-x:auto;">
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
+      <select id="statusFilter" onchange="filterRows()">
+        <option value="">すべてのステータス</option>
+        <option value="未対応">未対応</option>
+        <option value="対応済み">対応済み</option>
+      </select>
+      <button class="btn-clear" onclick="clearSearch()">✕ クリア</button>
+      <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
+    </div>
+    <table><thead><tr>
       <th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>
-      <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th>
-      <th>ステータス</th><th>操作</th>
-    </tr></thead>
-    <tbody id="msgTable">${rows}</tbody>
-  </table>
-</div>
-<script>
-  const totalCount = ${snapshot.size};
-  function filterRows() {
-    const keyword = document.getElementById('searchInput').value.toLowerCase().trim();
-    const status = document.getElementById('statusFilter').value;
-    const rows = document.querySelectorAll('tr.msg-row');
-    let visible = 0;
-    rows.forEach(row => {
-      const searchData = row.getAttribute('data-search') || '';
-      const statusCell = row.querySelector('td:nth-child(8)');
-      const rowStatus = statusCell ? statusCell.textContent.trim() : '';
-      const show = (!keyword || searchData.includes(keyword)) && (!status || rowStatus === status);
-      row.classList.toggle('hidden', !show);
-      const replyRow = row.nextElementSibling;
-      if (replyRow && replyRow.id && replyRow.id.startsWith('reply-')) replyRow.classList.toggle('hidden', !show);
-      if (show) visible++;
-    });
-    document.getElementById('searchCount').textContent = keyword || status ? \`\${visible} 件 / 全 \${totalCount} 件\` : \`全 \${totalCount} 件\`;
-  }
-  function clearSearch() { document.getElementById('searchInput').value=''; document.getElementById('statusFilter').value=''; filterRows(); }
-  function openReply(id) { const r=document.getElementById('reply-'+id); r.style.display=r.style.display==='none'?'table-row':'none'; }
-  function closeReply(id) { document.getElementById('reply-'+id).style.display='none'; }
-  async function sendReply(docId, senderId) {
-    const text = document.getElementById('text-'+docId).value;
-    const fileInput = document.getElementById('file-'+docId);
-    const result = document.getElementById('result-'+docId);
-    if (!text.trim() && (!fileInput.files || fileInput.files.length === 0)) {
-      result.textContent='⚠️ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
+      <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
+    </tr></thead><tbody id="msgTable">${rows}</tbody></table>
+  </div>
+  <script>
+    const totalCount=${snapshot.size};
+    function filterRows(){
+      const keyword=document.getElementById('searchInput').value.toLowerCase().trim();
+      const status=document.getElementById('statusFilter').value;
+      const rows=document.querySelectorAll('tr.msg-row');
+      let visible=0;
+      rows.forEach(row=>{
+        const searchData=row.getAttribute('data-search')||'';
+        const statusCell=row.querySelector('td:nth-child(8)');
+        const rowStatus=statusCell?statusCell.textContent.trim():'';
+        const show=(!keyword||searchData.includes(keyword))&&(!status||rowStatus===status);
+        row.classList.toggle('hidden',!show);
+        const replyRow=row.nextElementSibling;
+        if(replyRow&&replyRow.id&&replyRow.id.startsWith('reply-'))replyRow.classList.toggle('hidden',!show);
+        if(show)visible++;
+      });
+      document.getElementById('searchCount').textContent=keyword||status?\`\${visible} 件 / 全 \${totalCount} 件\`:\`全 \${totalCount} 件\`;
     }
-    result.textContent='送信中...'; result.style.color='gray';
-    try {
-      const formData = new FormData();
-      formData.append('docId', docId);
-      formData.append('senderId', senderId);
-      formData.append('message', text);
-      if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-      const res = await fetch('/admin/reply', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.success) { result.textContent='✅ 送信完了！'; result.style.color='green'; setTimeout(()=>location.reload(),1500); }
-      else { result.textContent='❌ 送信失敗: '+data.error; result.style.color='red'; }
-    } catch(e) { result.textContent='❌ エラー: '+e.message; result.style.color='red'; }
-  }
-</script></body></html>`);
+    function clearSearch(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';filterRows();}
+    function openReply(id){const r=document.getElementById('reply-'+id);r.style.display=r.style.display==='none'?'table-row':'none';}
+    function closeReply(id){document.getElementById('reply-'+id).style.display='none';}
+    async function sendReply(docId,senderId){
+      const text=document.getElementById('text-'+docId).value;
+      const fileInput=document.getElementById('file-'+docId);
+      const result=document.getElementById('result-'+docId);
+      if(!text.trim()&&(!fileInput.files||fileInput.files.length===0)){result.textContent='⚠️ メッセージまたはファイルを入力してください';result.style.color='orange';return;}
+      result.textContent='送信中...';result.style.color='gray';
+      try{
+        const formData=new FormData();
+        formData.append('docId',docId);formData.append('senderId',senderId);formData.append('message',text);
+        if(fileInput.files&&fileInput.files.length>0)formData.append('file',fileInput.files[0]);
+        const res=await fetch('/admin/reply',{method:'POST',body:formData});
+        const data=await res.json();
+        if(data.success){result.textContent='✅ 送信完了！';result.style.color='green';setTimeout(()=>location.reload(),1500);}
+        else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
+      }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
+    }
+  </script></body></html>`);
 });
 
 // ユーザー一覧
@@ -258,43 +222,33 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
   const users = {};
   snapshot.docs.forEach(doc => {
-    const d = doc.data();
-    const sid = d.senderId;
+    const d = doc.data(); const sid = d.senderId;
     if (!users[sid]) users[sid] = { senderId: sid, senderName: d.senderName || '不明', count: 0, unread: 0, lastMessage: d.message || '', lastDate: d.createdAt };
     users[sid].count++;
     if (d.status === '未対応') users[sid].unread++;
   });
-
   const senderIds = Object.keys(users);
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
     const doc = await db.collection('contacts').doc(sid).get();
     if (doc.exists) profileMap[sid] = doc.data();
   }));
-
   const rows = Object.values(users).map(u => {
     const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
     const profile = profileMap[u.senderId] || {};
     return `<tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
       <td><strong>${u.senderName}</strong>${unreadBadge}</td>
-      <td>${profile.workplace || '―'}</td>
-      <td>${profile.residenceStatus || '―'}</td>
-      <td>${u.lastMessage}</td>
-      <td>${lastDate}</td>
-      <td>${u.count}</td>
+      <td>${profile.workplace || '―'}</td><td>${profile.residenceStatus || '―'}</td>
+      <td>${u.lastMessage}</td><td>${lastDate}</td><td>${u.count}</td>
     </tr>`;
   }).join('');
-
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ユーザー履歴</title>
   <style>${commonCss()} table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
   th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:14px 16px;border-bottom:1px solid #eee;} tr:hover td{background:#f0f7ff;}</style>
-  </head><body>
-  <header><h1>👥 ユーザー履歴</h1>${navHtml()}</header>
-  <div class="container">
-    <table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-  </div></body></html>`);
+  </head><body><header><h1>👥 ユーザー履歴</h1>${navHtml()}</header>
+  <div class="container"><table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>
+  <tbody>${rows}</tbody></table></div></body></html>`);
 });
 
 // ユーザー詳細
@@ -305,7 +259,6 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     db.collection('contacts').doc(senderId).get()
   ]);
   if (msgSnapshot.empty) return res.status(404).send('ユーザーが見つかりません');
-
   const senderName = msgSnapshot.docs[0].data().senderName || '不明';
   const totalCount = msgSnapshot.size;
   const unreadCount = msgSnapshot.docs.filter(d => d.data().status === '未対応').length;
@@ -316,37 +269,31 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-
-    let html = `<div style="display:flex;justify-content:flex-start;margin-bottom:16px;">
-      <div style="max-width:60%;">
-        <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
-        <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">${d.message || ''}</div>
-        <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
-      </div></div>`;
-
+    let html = `<div style="display:flex;justify-content:flex-start;margin-bottom:16px;"><div style="max-width:60%;">
+      <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
+      <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">${d.message || ''}</div>
+      <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
+    </div></div>`;
     if (d.replyMessage) {
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
-      html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
-        <div style="max-width:60%;">
-          <div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">${d.replyAdmin || '管理者'} · ${repliedAt}</div>
-          <div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);white-space:pre-wrap;">${d.replyMessage}</div>
-        </div></div>`;
+      html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:60%;">
+        <div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">${d.replyAdmin || '管理者'} · ${repliedAt}</div>
+        <div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);white-space:pre-wrap;">${d.replyMessage}</div>
+      </div></div>`;
     }
-
     if (status === '未対応') {
-      html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
-        <div style="max-width:70%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">
-          <textarea id="text-${doc.id}" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>
-          <div style="margin-top:8px;">
-            <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
-            <input type="file" id="file-${doc.id}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
-            <small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>
-          </div>
-          <div style="margin-top:8px;">
-            <button onclick="sendReply('${doc.id}', '${senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
-            <span id="result-${doc.id}" style="font-weight:bold;"></span>
-          </div>
-        </div></div>`;
+      html += `<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:70%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">
+        <textarea id="text-${doc.id}" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>
+        <div style="margin-top:8px;">
+          <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
+          <input type="file" id="file-${doc.id}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
+          <small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>
+        </div>
+        <div style="margin-top:8px;">
+          <button onclick="sendReply('${doc.id}','${senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
+          <span id="result-${doc.id}" style="font-weight:bold;"></span>
+        </div>
+      </div></div>`;
     }
     return html;
   }).join('');
@@ -363,15 +310,13 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
   </style></head><body>
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml()}</header>
   <div class="container">
-    <div class="card">
-      <div class="user-info">
-        <div><div class="label">名前</div><div class="value">${senderName}</div></div>
-        <div><div class="label">送信者ID</div><div class="value" style="font-size:13px;">${senderId}</div></div>
-        <div><div class="label">問い合わせ件数</div><div class="value">${totalCount} 件</div></div>
-        <div><div class="label">未対応</div><div class="value" style="color:${unreadCount > 0 ? '#e74c3c' : '#27ae60'}">${unreadCount} 件</div></div>
-        <div><a href="/admin/contacts" style="color:#2980b9;text-decoration:none;">← 一覧に戻る</a></div>
-      </div>
-    </div>
+    <div class="card"><div class="user-info">
+      <div><div class="label">名前</div><div class="value">${senderName}</div></div>
+      <div><div class="label">送信者ID</div><div class="value" style="font-size:13px;">${senderId}</div></div>
+      <div><div class="label">問い合わせ件数</div><div class="value">${totalCount} 件</div></div>
+      <div><div class="label">未対応</div><div class="value" style="color:${unreadCount > 0 ? '#e74c3c' : '#27ae60'}">${unreadCount} 件</div></div>
+      <div><a href="/admin/contacts" style="color:#2980b9;text-decoration:none;">← 一覧に戻る</a></div>
+    </div></div>
     <div class="card">
       <h3 style="margin-top:0;color:#2c3e50;">📝 プロフィール情報</h3>
       <div class="profile-grid">
@@ -386,32 +331,31 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     <div class="card"><h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>${messages}</div>
   </div>
   <script>
-    async function saveProfile() {
-      const msg=document.getElementById('profileMsg');
-      msg.textContent='保存中...'; msg.style.color='gray';
+    async function saveProfile(){
+      const msg=document.getElementById('profileMsg');msg.textContent='保存中...';msg.style.color='gray';
       const data={passportName:document.getElementById('passportName').value.trim(),workplace:document.getElementById('workplace').value.trim(),residenceStatus:document.getElementById('residenceStatus').value.trim(),entryDate:document.getElementById('entryDate').value};
-      try {
+      try{
         const res=await fetch('/admin/contacts/${senderId}/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
         const result=await res.json();
         if(result.success){msg.textContent='✅ 保存しました';msg.style.color='green';}
         else{msg.textContent='❌ 保存失敗: '+result.error;msg.style.color='red';}
-      } catch(e){msg.textContent='❌ エラー: '+e.message;msg.style.color='red';}
+      }catch(e){msg.textContent='❌ エラー: '+e.message;msg.style.color='red';}
     }
-    async function sendReply(docId, senderId) {
+    async function sendReply(docId,senderId){
       const text=document.getElementById('text-'+docId).value;
       const fileInput=document.getElementById('file-'+docId);
       const result=document.getElementById('result-'+docId);
       if(!text.trim()&&(!fileInput.files||fileInput.files.length===0)){result.textContent='⚠️ メッセージまたはファイルを入力してください';result.style.color='orange';return;}
-      result.textContent='送信中...'; result.style.color='gray';
-      try {
+      result.textContent='送信中...';result.style.color='gray';
+      try{
         const formData=new FormData();
-        formData.append('docId',docId); formData.append('senderId',senderId); formData.append('message',text);
-        if(fileInput.files&&fileInput.files.length>0) formData.append('file',fileInput.files[0]);
+        formData.append('docId',docId);formData.append('senderId',senderId);formData.append('message',text);
+        if(fileInput.files&&fileInput.files.length>0)formData.append('file',fileInput.files[0]);
         const res=await fetch('/admin/reply',{method:'POST',body:formData});
         const data=await res.json();
         if(data.success){result.textContent='✅ 送信完了！';result.style.color='green';setTimeout(()=>location.reload(),1500);}
         else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
-      } catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
+      }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
     }
     window.onload=()=>window.scrollTo(0,document.body.scrollHeight);
   </script></body></html>`);
@@ -427,7 +371,7 @@ app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
   } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
-// 返信API（テキスト＋ファイル2段階方式）
+// 返信API（テキスト＋ファイル直接送信）
 app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
   const docId = req.body.docId;
   const senderId = req.body.senderId;
@@ -448,33 +392,29 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       });
     }
 
-    // ファイル送信（2段階）
+    // ファイル送信（/me/messages に直接multipart）
     if (req.file) {
       const attachmentType = getAttachmentType(req.file.mimetype);
+      console.log('ファイル送信中:', req.file.originalname, attachmentType, senderId);
 
-      // Step1: attachment_id取得
       const formData1 = new FormDataLib();
+      formData1.append('recipient', JSON.stringify({ id: senderId }));
       formData1.append('message', JSON.stringify({
-        attachment: { type: attachmentType, payload: {} }
+        attachment: { type: attachmentType, payload: { is_reusable: false } }
       }));
       formData1.append('filedata', req.file.buffer, {
         filename: req.file.originalname,
         contentType: req.file.mimetype
       });
 
-      console.log('Step1: attachment_id取得中...');
-      const uploadRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/message_attachments?access_token=${PAGE_ACCESS_TOKEN}`,
+      const sendRes = await fetch(
+        `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
         { method: 'POST', body: formData1, headers: formData1.getHeaders() }
       );
-      const uploadData = await uploadRes.json();
-      console.log('Step1結果:', JSON.stringify(uploadData));
+      const sendData = await sendRes.json();
+      console.log('ファイル送信結果:', JSON.stringify(sendData));
 
-      if (uploadData.attachment_id) {
-        // Step2: attachment_idで送信
-        const sendResult = await sendAttachment(senderId, uploadData.attachment_id, attachmentType);
-        console.log('Step2結果:', JSON.stringify(sendResult));
-
+      if (sendData.message_id) {
         if (!message || !message.trim()) {
           await db.collection('messages').doc(docId).update({
             status: '対応済み',
@@ -484,8 +424,8 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
           });
         }
       } else {
-        console.error('ファイルアップロードエラー:', uploadData);
-        return res.json({ success: false, error: 'ファイルアップロード失敗: ' + JSON.stringify(uploadData) });
+        console.error('ファイル送信エラー:', sendData);
+        return res.json({ success: false, error: 'ファイル送信失敗: ' + JSON.stringify(sendData) });
       }
     }
 
@@ -508,7 +448,6 @@ app.get('/admin/users', basicAuth, async (req, res) => {
       <td><button onclick="deleteUser('${doc.id}','${d.userId}')" style="background:#e74c3c;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">削除</button></td>
     </tr>`;
   }).join('');
-
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>管理者管理</title>
   <style>${commonCss()} .card{background:white;border-radius:8px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.1);margin-bottom:24px;}
   table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
@@ -517,12 +456,10 @@ app.get('/admin/users', basicAuth, async (req, res) => {
   textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:300px;}
   button.add{background:#27ae60;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;}
   .msg{margin-top:12px;font-weight:bold;} .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:700px;}
-  label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
-  </style></head><body>
+  label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}</style></head><body>
   <header><h1>👤 管理者管理</h1>${navHtml()}</header>
   <div class="container">
-    <div class="card">
-      <h2 style="margin-top:0;">管理者を追加</h2>
+    <div class="card"><h2 style="margin-top:0;">管理者を追加</h2>
       <div class="form-grid">
         <div><label>ユーザーID *</label><input type="text" id="newId" placeholder="例：yamada"></div>
         <div><label>パスワード *</label><input type="password" id="newPass" placeholder="パスワード"></div>
