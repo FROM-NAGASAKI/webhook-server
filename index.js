@@ -32,16 +32,12 @@ async function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
-// 送信者情報（名前＋プロフィール画像）取得
 async function getSenderInfo(senderId) {
   try {
     const url = `https://graph.facebook.com/v19.0/${senderId}?fields=name,picture&access_token=${PAGE_ACCESS_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
-    return {
-      name: data.name || '不明',
-      picture: data.picture?.data?.url || null
-    };
+    return { name: data.name || '不明', picture: data.picture?.data?.url || null };
   } catch (err) { return { name: '不明', picture: null }; }
 }
 
@@ -75,13 +71,13 @@ function attachmentHtml(d) {
   return '<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">' + icon + ' ' + d.attachmentName + '</div>';
 }
 
-// アバター画像HTML
-function avatarHtml(name, pictureUrl) {
+function avatarHtml(name, pictureUrl, size) {
+  size = size || 32;
   if (pictureUrl) {
-    return `<img src="${pictureUrl}" alt="${name}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">`;
+    return `<img src="${pictureUrl}" alt="${name}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">`;
   }
   const initial = name ? name.charAt(0).toUpperCase() : '?';
-  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">${initial}</span>`;
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:#3498db;color:white;font-size:${Math.floor(size*0.44)}px;font-weight:bold;vertical-align:middle;margin-right:8px;">${initial}</span>`;
 }
 
 function navHtml(adminName) {
@@ -108,8 +104,9 @@ function commonCss() {
 app.get('/login', (req, res) => {
   if (req.session && req.session.adminId) return res.redirect('/admin');
   const error = req.query.error ? '<p style="color:#e74c3c;margin-bottom:16px;">IDまたはパスワードが違います</p>' : '';
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ログイン</title>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
   <link rel="icon" href="https://www.facebook.com/favicon.ico">
+  <title>ログイン</title>
   <style>
     body{font-family:sans-serif;margin:0;background:#2c3e50;display:flex;justify-content:center;align-items:center;min-height:100vh;}
     .card{background:white;border-radius:12px;padding:40px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.3);}
@@ -117,7 +114,7 @@ app.get('/login', (req, res) => {
     .subtitle{text-align:center;color:#888;font-size:14px;margin-bottom:28px;}
     label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
     input{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;box-sizing:border-box;margin-bottom:16px;}
-    input:focus{outline:none;border-color:#2980b9;box-shadow:0 0 0 2px rgba(41,128,185,0.2);}
+    input:focus{outline:none;border-color:#2980b9;}
     button{width:100%;padding:12px;background:#2c3e50;color:white;border:none;border-radius:6px;font-size:15px;cursor:pointer;font-weight:bold;}
     button:hover{background:#34495e;}
   </style></head><body>
@@ -163,6 +160,41 @@ app.post('/login', async (req, res) => {
 // ログアウト
 app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/login'); });
 
+// 新着メッセージAPI
+app.get('/admin/messages/new', requireAuth, async (req, res) => {
+  try {
+    const after = req.query.after;
+    const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').limit(20).get();
+    const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
+    const profileMap = {};
+    await Promise.all(senderIds.map(async sid => {
+      const doc = await db.collection('contacts').doc(sid).get();
+      if (doc.exists) profileMap[sid] = doc.data();
+    }));
+    const messages = [];
+    for (const doc of snapshot.docs) {
+      const d = doc.data();
+      if (!d.createdAt) continue;
+      const createdAtISO = d.createdAt.toDate().toISOString();
+      if (after && createdAtISO <= after) continue;
+      const profile = profileMap[d.senderId] || {};
+      messages.push({
+        docId: doc.id,
+        senderId: d.senderId,
+        senderName: d.senderName || '不明',
+        senderPicture: d.senderPicture || null,
+        message: d.message || '',
+        status: d.status || '未対応',
+        workplace: profile.workplace || '',
+        residenceStatus: profile.residenceStatus || '',
+        date: d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+        createdAtISO
+      });
+    }
+    res.json({ messages });
+  } catch (err) { res.json({ messages: [], error: err.message }); }
+});
+
 // 問い合わせ一覧
 app.get('/admin', requireAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').limit(100).get();
@@ -172,6 +204,10 @@ app.get('/admin', requireAuth, async (req, res) => {
     const doc = await db.collection('contacts').doc(sid).get();
     if (doc.exists) profileMap[sid] = doc.data();
   }));
+
+  // 最新メッセージのISO時刻
+  const latestISO = snapshot.size > 0 && snapshot.docs[0].data().createdAt
+    ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
 
   const rows = snapshot.docs.map(doc => {
     const d = doc.data();
@@ -190,9 +226,8 @@ app.get('/admin', requireAuth, async (req, res) => {
       const icon = d.attachmentType === 'image' ? '🖼️' : '📄';
       replyHtml += '<br><span style="font-size:12px;color:#2980b9;">' + icon + ' ' + d.attachmentName + '</span>';
     }
-
     return `
-      <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
+      <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}" data-docid="${doc.id}">
         <td>${date}</td>
         <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">${avatarHtml(name, picture)}${name}</a></td>
         <td>${workplace}</td><td>${residenceStatus}</td>
@@ -234,6 +269,8 @@ app.get('/admin', requireAuth, async (req, res) => {
     th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;white-space:nowrap;}
     td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:middle;max-width:180px;word-break:break-all;}
     tr.msg-row:hover td{background:#f9f9f9;} .hidden{display:none !important;}
+    @keyframes highlight{0%{background:#fff9c4;}100%{background:transparent;}}
+    .new-message td{animation:highlight 3s ease-out;}
   </style></head><body>
   <header><h1>📋 問い合わせ管理画面</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container" style="overflow-x:auto;">
@@ -252,8 +289,13 @@ app.get('/admin', requireAuth, async (req, res) => {
       <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
     </tr></thead><tbody id="msgTable">${rows}</tbody></table>
   </div>
+
   <script>
-    const totalCount=${snapshot.size};
+    let totalCount = ${snapshot.size};
+    let lastISO = '${latestISO}';
+    let isRefreshing = false;
+    let countdown = 60;
+
     function filterRows(){
       const keyword=document.getElementById('searchInput').value.toLowerCase().trim();
       const status=document.getElementById('statusFilter').value;
@@ -274,6 +316,7 @@ app.get('/admin', requireAuth, async (req, res) => {
     function clearSearch(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';filterRows();}
     function openReply(id){const r=document.getElementById('reply-'+id);r.style.display=r.style.display==='none'?'table-row':'none';}
     function closeReply(id){document.getElementById('reply-'+id).style.display='none';}
+
     async function sendReply(docId,senderId){
       const text=document.getElementById('text-'+docId).value;
       const fileInput=document.getElementById('file-'+docId);
@@ -290,6 +333,78 @@ app.get('/admin', requireAuth, async (req, res) => {
         else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
       }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
     }
+
+    // 新着チェック
+    async function checkNewMessages(){
+      if(isRefreshing) return;
+      isRefreshing = true;
+      try{
+        const res = await fetch('/admin/messages/new?after=' + encodeURIComponent(lastISO));
+        const data = await res.json();
+        if(data.messages && data.messages.length > 0){
+          const tbody = document.getElementById('msgTable');
+          data.messages.forEach(msg => {
+            if(document.querySelector('[data-docid="' + msg.docId + '"]')) return;
+            totalCount++;
+            const statusColor = msg.status === '未対応' ? '#e74c3c' : '#27ae60';
+            const avatar = msg.senderPicture
+              ? '<img src="' + msg.senderPicture + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">'
+              : '<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">' + (msg.senderName||'?').charAt(0).toUpperCase() + '</span>';
+
+            const newRow = document.createElement('tr');
+            newRow.className = 'msg-row new-message';
+            newRow.setAttribute('data-search', [msg.senderName||'', msg.message||'', msg.workplace||'', msg.residenceStatus||''].join(' ').toLowerCase());
+            newRow.setAttribute('data-docid', msg.docId);
+            newRow.innerHTML = \`
+              <td>\${msg.date}</td>
+              <td><a href="/admin/contacts/\${msg.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">\${avatar}\${msg.senderName||'不明'}</a></td>
+              <td>\${msg.workplace||'―'}</td><td>\${msg.residenceStatus||'―'}</td>
+              <td>\${msg.message||''}</td>
+              <td>―</td><td>―</td>
+              <td style="color:\${statusColor};font-weight:bold;">\${msg.status}</td>
+              <td><button onclick="openReply('\${msg.docId}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>
+            \`;
+            const replyRow = document.createElement('tr');
+            replyRow.id = 'reply-' + msg.docId;
+            replyRow.style.cssText = 'display:none;background:#f0f7ff;';
+            replyRow.innerHTML = \`<td colspan="9" style="padding:12px;">
+              <textarea id="text-\${msg.docId}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
+                <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
+                <input type="file" id="file-\${msg.docId}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
+              </div>
+              <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
+              <div style="margin-top:10px;">
+                <button onclick="sendReply('\${msg.docId}','\${msg.senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
+                <button onclick="closeReply('\${msg.docId}')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
+                <span id="result-\${msg.docId}" style="margin-left:12px;font-weight:bold;"></span>
+              </div>
+            </td>\`;
+            tbody.insertBefore(replyRow, tbody.firstChild);
+            tbody.insertBefore(newRow, tbody.firstChild);
+            if(msg.createdAtISO > lastISO) lastISO = msg.createdAtISO;
+          });
+          document.getElementById('searchCount').textContent = '全 ' + totalCount + ' 件';
+          document.title = '🔔 新着 ' + data.messages.length + '件 | 問い合わせ管理画面';
+          setTimeout(()=>{ document.title = '📋 問い合わせ管理画面'; }, 5000);
+        }
+      }catch(e){ console.error('自動更新エラー:', e); }
+      isRefreshing = false;
+    }
+
+    // 1分ごとに新着チェック
+    setInterval(checkNewMessages, 60000);
+
+    // カウントダウン表示
+    const indicator = document.createElement('div');
+    indicator.style.cssText = 'position:fixed;bottom:16px;right:16px;background:rgba(44,62,80,0.85);color:white;padding:8px 16px;border-radius:20px;font-size:12px;z-index:999;';
+    indicator.textContent = '🔄 次回更新: 60秒後';
+    document.body.appendChild(indicator);
+    setInterval(()=>{
+      countdown--;
+      if(countdown <= 0) countdown = 60;
+      indicator.textContent = '🔄 次回更新: ' + countdown + '秒後';
+    }, 1000);
   </script></body></html>`);
 });
 
@@ -398,7 +513,7 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container">
     <div class="card"><div class="user-info">
-      <div>${avatarHtml(senderName, senderPicture)}</div>
+      <div>${avatarHtml(senderName, senderPicture, 48)}</div>
       <div><div class="label">名前</div><div class="value">${senderName}</div></div>
       <div><div class="label">送信者ID</div><div class="value" style="font-size:13px;">${senderId}</div></div>
       <div><div class="label">問い合わせ件数</div><div class="value">${totalCount} 件</div></div>
@@ -467,32 +582,23 @@ app.post('/admin/reply', requireAuth, upload.single('file'), async (req, res) =>
   const adminId = req.session.adminId;
   const adminDisplayName = req.session.adminDisplayName;
   const adminSignature = req.session.adminSignature;
-
   try {
     if (message && message.trim()) {
       let fullMessage = message;
       if (adminSignature) fullMessage = message + '\n\n' + adminSignature;
       await sendMessage(senderId, fullMessage);
       await db.collection('messages').doc(docId).update({
-        status: '対応済み',
-        repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-        replyMessage: fullMessage,
-        replyAdmin: adminDisplayName || adminId
+        status: '対応済み', repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+        replyMessage: fullMessage, replyAdmin: adminDisplayName || adminId
       });
     }
-
     if (req.file) {
       const attachmentType = getAttachmentType(req.file.mimetype);
       const formData1 = new FormData();
       formData1.append('recipient', JSON.stringify({ id: senderId }));
       formData1.append('message', JSON.stringify({ attachment: { type: attachmentType, payload: { is_reusable: false } } }));
       formData1.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
-
-      const axiosRes = await axios.post(
-        `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-        formData1, { headers: formData1.getHeaders() }
-      );
-
+      const axiosRes = await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, formData1, { headers: formData1.getHeaders() });
       if (axiosRes.data.message_id) {
         let attachmentUrl = null;
         if (attachmentType === 'image') {
@@ -500,15 +606,9 @@ app.post('/admin/reply', requireAuth, upload.single('file'), async (req, res) =>
             const urlRes = await fetch(`https://graph.facebook.com/v19.0/${axiosRes.data.message_id}/attachments?access_token=${PAGE_ACCESS_TOKEN}`);
             const urlData = await urlRes.json();
             if (urlData.data && urlData.data[0] && urlData.data[0].image_data) attachmentUrl = urlData.data[0].image_data.url;
-          } catch (e) { console.error('URL取得失敗:', e); }
+          } catch (e) {}
         }
-        const updateData = {
-          status: '対応済み',
-          repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-          replyAdmin: adminDisplayName || adminId,
-          attachmentName: req.file.originalname,
-          attachmentType
-        };
+        const updateData = { status: '対応済み', repliedAt: admin.firestore.FieldValue.serverTimestamp(), replyAdmin: adminDisplayName || adminId, attachmentName: req.file.originalname, attachmentType };
         if (attachmentUrl) updateData.attachmentUrl = attachmentUrl;
         if (!message || !message.trim()) updateData.replyMessage = `[添付ファイル: ${req.file.originalname}]`;
         await db.collection('messages').doc(docId).update(updateData);
@@ -621,11 +721,8 @@ app.post('/webhook', async (req, res) => {
         const messageText = event.message.text;
         const senderInfo = await getSenderInfo(senderId);
         await db.collection('messages').add({
-          senderId,
-          senderName: senderInfo.name,
-          senderPicture: senderInfo.picture,
-          message: messageText,
-          status: '未対応',
+          senderId, senderName: senderInfo.name, senderPicture: senderInfo.picture,
+          message: messageText, status: '未対応',
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         await sendMessage(senderId, 'お問い合わせありがとうございます。担当者より折り返しご連絡いたします。');
