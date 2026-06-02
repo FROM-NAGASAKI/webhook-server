@@ -38,9 +38,7 @@ async function basicAuth(req, res, next) {
 
   const allAdmins = await db.collection('admins').get();
   if (allAdmins.empty && id === 'from-nagasaki-admin' && pass === 'fngs-4301') {
-    req.adminId = id;
-    req.adminDisplayName = id;
-    req.adminSignature = '';
+    req.adminId = id; req.adminDisplayName = id; req.adminSignature = '';
     return next();
   }
 
@@ -54,18 +52,15 @@ async function getSenderName(senderId) {
     const response = await fetch(url);
     const data = await response.json();
     return data.name || '不明';
-  } catch (err) {
-    return '不明';
-  }
+  } catch (err) { return '不明'; }
 }
 
 function navHtml() {
-  return `
-    <nav>
-      <a href="/admin">📋 問い合わせ</a>
-      <a href="/admin/contacts">👥 ユーザー履歴</a>
-      <a href="/admin/users">👤 管理者</a>
-    </nav>`;
+  return `<nav>
+    <a href="/admin">📋 問い合わせ</a>
+    <a href="/admin/contacts">👥 ユーザー履歴</a>
+    <a href="/admin/users">👤 管理者</a>
+  </nav>`;
 }
 
 function commonCss() {
@@ -83,7 +78,6 @@ app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages')
     .orderBy('createdAt', 'desc').limit(100).get();
 
-  // プロフィール情報を一括取得
   const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
@@ -91,36 +85,29 @@ app.get('/admin', basicAuth, async (req, res) => {
     if (doc.exists) profileMap[sid] = doc.data();
   }));
 
-  const rowsData = snapshot.docs.map(doc => {
+  const rows = snapshot.docs.map(doc => {
     const d = doc.data();
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
+    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const name = d.senderName || '不明';
-    const replyMessage = d.replyMessage || '';
-    const replyAdmin = d.replyAdmin || '';
+    const replyMessage = d.replyMessage ? d.replyMessage.replace(/\n/g, '<br>') : '―';
+    const replyAdmin = d.replyAdmin || '―';
     const profile = profileMap[d.senderId] || {};
-    const passportName = profile.passportName || '';
-    const workplace = profile.workplace || '';
-    const residenceStatus = profile.residenceStatus || '';
-
-    // 検索用データ属性
-    const searchData = [name, d.message || '', passportName, workplace, residenceStatus]
+    const workplace = profile.workplace || '―';
+    const residenceStatus = profile.residenceStatus || '―';
+    const searchData = [name, d.message || '', profile.passportName || '', workplace, residenceStatus]
       .join(' ').toLowerCase();
 
-    return { doc, d, date, status, name, replyMessage, replyAdmin, passportName, workplace, residenceStatus, searchData };
-  });
-
-  const rows = rowsData.map(({ doc, d, date, status, name, replyMessage, replyAdmin, searchData }) => {
-    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-    const replyHtml = replyMessage ? replyMessage.replace(/\n/g, '<br>') : '―';
     return `
       <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
         <td>${date}</td>
         <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;">${name}</a></td>
-        <td>${d.senderId || ''}</td>
+        <td>${workplace}</td>
+        <td>${residenceStatus}</td>
         <td>${d.message || ''}</td>
-        <td>${replyHtml}</td>
-        <td>${replyAdmin || '―'}</td>
+        <td>${replyMessage}</td>
+        <td>${replyAdmin}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
         <td>
           <button onclick="openReply('${doc.id}')"
@@ -128,7 +115,7 @@ app.get('/admin', basicAuth, async (req, res) => {
         </td>
       </tr>
       <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
-        <td colspan="8" style="padding:12px;">
+        <td colspan="9" style="padding:12px;">
           <textarea id="text-${doc.id}" rows="3"
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
             placeholder="返信メッセージを入力..."></textarea>
@@ -158,9 +145,9 @@ app.get('/admin', basicAuth, async (req, res) => {
     .btn-clear { background:#ecf0f1; color:#555; }
     .btn-clear:hover { background:#bdc3c7; }
     .search-count { color:#666; font-size:14px; }
-    table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); min-width:900px; }
+    table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); min-width:1100px; }
     th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; white-space:nowrap; }
-    td { padding:12px 16px; border-bottom:1px solid #eee; vertical-align:top; max-width:200px; word-break:break-all; }
+    td { padding:12px 16px; border-bottom:1px solid #eee; vertical-align:top; max-width:180px; word-break:break-all; }
     tr.msg-row:hover td { background:#f9f9f9; }
     .hidden { display:none !important; }
   </style>
@@ -171,10 +158,8 @@ app.get('/admin', basicAuth, async (req, res) => {
     ${navHtml()}
   </header>
   <div class="container" style="overflow-x:auto;">
-
-    <!-- 検索バー -->
     <div class="search-bar">
-      <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・プロフィールで検索..." oninput="filterRows()">
+      <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
       <select id="statusFilter" onchange="filterRows()">
         <option value="">すべてのステータス</option>
         <option value="未対応">未対応</option>
@@ -183,65 +168,52 @@ app.get('/admin', basicAuth, async (req, res) => {
       <button class="btn-clear" onclick="clearSearch()">✕ クリア</button>
       <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
     </div>
-
     <table>
       <thead>
         <tr>
-          <th>受信日時</th><th>名前</th><th>送信者ID</th><th>メッセージ</th>
-          <th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
+          <th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>
+          <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th>
+          <th>ステータス</th><th>操作</th>
         </tr>
       </thead>
       <tbody id="msgTable">${rows}</tbody>
     </table>
   </div>
-
   <script>
     const totalCount = ${snapshot.size};
-
     function filterRows() {
       const keyword = document.getElementById('searchInput').value.toLowerCase().trim();
       const status = document.getElementById('statusFilter').value;
       const rows = document.querySelectorAll('tr.msg-row');
       let visible = 0;
-
       rows.forEach(row => {
         const searchData = row.getAttribute('data-search') || '';
-        const statusCell = row.querySelector('td:nth-child(7)');
+        const statusCell = row.querySelector('td:nth-child(8)');
         const rowStatus = statusCell ? statusCell.textContent.trim() : '';
-
         const matchKeyword = !keyword || searchData.includes(keyword);
         const matchStatus = !status || rowStatus === status;
-
         const show = matchKeyword && matchStatus;
         row.classList.toggle('hidden', !show);
-
-        // 返信フォーム行も連動して非表示
         const replyRow = row.nextElementSibling;
         if (replyRow && replyRow.id && replyRow.id.startsWith('reply-')) {
           if (!show) replyRow.classList.add('hidden');
           else replyRow.classList.remove('hidden');
         }
-
         if (show) visible++;
       });
-
       document.getElementById('searchCount').textContent =
         keyword || status ? \`\${visible} 件 / 全 \${totalCount} 件\` : \`全 \${totalCount} 件\`;
     }
-
     function clearSearch() {
       document.getElementById('searchInput').value = '';
       document.getElementById('statusFilter').value = '';
       filterRows();
     }
-
     function openReply(id) {
       const r = document.getElementById('reply-' + id);
       r.style.display = r.style.display === 'none' ? 'table-row' : 'none';
     }
-    function closeReply(id) {
-      document.getElementById('reply-' + id).style.display = 'none';
-    }
+    function closeReply(id) { document.getElementById('reply-' + id).style.display = 'none'; }
     async function sendReply(docId, senderId) {
       const text = document.getElementById('text-' + docId).value;
       const result = document.getElementById('result-' + docId);
@@ -265,6 +237,7 @@ app.get('/admin', basicAuth, async (req, res) => {
 // ユーザー一覧
 app.get('/admin/contacts', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
+
   const users = {};
   snapshot.docs.forEach(doc => {
     const d = doc.data();
@@ -276,31 +249,62 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
     if (d.status === '未対応') users[sid].unread++;
   });
 
+  // プロフィール情報を一括取得
+  const senderIds = Object.keys(users);
+  const profileMap = {};
+  await Promise.all(senderIds.map(async sid => {
+    const doc = await db.collection('contacts').doc(sid).get();
+    if (doc.exists) profileMap[sid] = doc.data();
+  }));
+
   const rows = Object.values(users).map(u => {
     const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
+    const unreadBadge = u.unread > 0
+      ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>`
+      : '';
+    const profile = profileMap[u.senderId] || {};
+    const workplace = profile.workplace || '―';
+    const residenceStatus = profile.residenceStatus || '―';
     return `
       <tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
         <td><strong>${u.senderName}</strong>${unreadBadge}</td>
-        <td>${u.senderId}</td>
+        <td>${workplace}</td>
+        <td>${residenceStatus}</td>
         <td>${u.lastMessage}</td>
         <td>${lastDate}</td>
         <td>${u.count}</td>
       </tr>`;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ユーザー履歴</title>
-  <style>${commonCss()}
-    table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
-    th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;}
-    td{padding:14px 16px;border-bottom:1px solid #eee;}
-    tr:hover td{background:#f0f7ff;}
-  </style></head><body>
+  res.send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ユーザー履歴</title>
+  <style>
+    ${commonCss()}
+    table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+    th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; }
+    td { padding:14px 16px; border-bottom:1px solid #eee; }
+    tr:hover td { background:#f0f7ff; }
+  </style>
+</head>
+<body>
   <header><h1>👥 ユーザー履歴</h1>${navHtml()}</header>
   <div class="container">
-    <table><thead><tr><th>名前</th><th>送信者ID</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-  </div></body></html>`);
+    <table>
+      <thead>
+        <tr>
+          <th>名前</th><th>所属事業所</th><th>在留資格</th>
+          <th>最新メッセージ</th><th>最終日時</th><th>件数</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+</body>
+</html>`);
 });
 
 // ユーザー詳細・チャット履歴
@@ -363,18 +367,25 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     return html;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  res.send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${senderName} の履歴</title>
-  <style>${commonCss()}
-    .card{background:white;border-radius:8px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
-    .user-info{display:flex;gap:32px;align-items:center;flex-wrap:wrap;}
-    .user-info .label{font-size:12px;color:#888;}
-    .user-info .value{font-size:15px;font-weight:bold;}
-    .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;}
-    label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
-    input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}
-    button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}
-  </style></head><body>
+  <style>
+    ${commonCss()}
+    .card { background:white; border-radius:8px; padding:20px 24px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+    .user-info { display:flex; gap:32px; align-items:center; flex-wrap:wrap; }
+    .user-info .label { font-size:12px; color:#888; }
+    .user-info .value { font-size:15px; font-weight:bold; }
+    .profile-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:600px; }
+    label { display:block; margin-bottom:4px; font-size:13px; color:#555; font-weight:bold; }
+    input[type=text], input[type=date] { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:100%; box-sizing:border-box; }
+    button.save { background:#2980b9; color:white; border:none; padding:9px 20px; border-radius:4px; cursor:pointer; font-size:14px; margin-top:8px; }
+  </style>
+</head>
+<body>
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml()}</header>
   <div class="container">
     <div class="card">
@@ -438,7 +449,9 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
       } catch(e) { result.textContent = '❌ エラー: ' + e.message; result.style.color = 'red'; }
     }
     window.onload = () => window.scrollTo(0, document.body.scrollHeight);
-  </script></body></html>`);
+  </script>
+</body>
+</html>`);
 });
 
 // プロフィール保存API
@@ -613,15 +626,12 @@ async function sendMessage(recipientId, text) {
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
     const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient: { id: recipientId }, message: { text } })
     });
     const data = await response.json();
     console.log('返信成功:', JSON.stringify(data));
-  } catch (err) {
-    console.error('返信失敗:', err);
-  }
+  } catch (err) { console.error('返信失敗:', err); }
 }
 
 const PORT = process.env.PORT || 3000;
