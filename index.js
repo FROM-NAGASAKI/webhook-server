@@ -538,8 +538,9 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       const formData = new FormDataLib();
       const attachmentType = getAttachmentType(req.file.mimetype);
 
+      formData.append('recipient', JSON.stringify({ id: senderId }));
       formData.append('message', JSON.stringify({
-        attachment: { type: attachmentType, payload: { is_reusable: true } }
+        attachment: { type: attachmentType, payload: { is_reusable: false } }
       }));
       formData.append('filedata', req.file.buffer, {
         filename: req.file.originalname,
@@ -547,7 +548,7 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       });
 
       const uploadRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/message_attachments?access_token=${PAGE_ACCESS_TOKEN}`,
+        `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
         { method: 'POST', body: formData, headers: formData.getHeaders() }
       );
       const uploadData = await uploadRes.json();
