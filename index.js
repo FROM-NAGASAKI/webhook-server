@@ -51,6 +51,29 @@ app.get('/admin', basicAuth, async (req, res) => {
         <td>${d.senderId || ''}</td>
         <td>${d.message || ''}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
+        <td>
+          <button onclick="openReply('${doc.id}', '${d.senderId}', this)" 
+            style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">
+            返信
+          </button>
+        </td>
+      </tr>
+      <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
+        <td colspan="5" style="padding:12px;">
+          <textarea id="text-${doc.id}" rows="3" 
+            style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
+            placeholder="返信メッセージを入力..."></textarea>
+          <br><br>
+          <button onclick="sendReply('${doc.id}', '${d.senderId}')"
+            style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">
+            送信
+          </button>
+          <button onclick="closeReply('${doc.id}')"
+            style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">
+            キャンセル
+          </button>
+          <span id="result-${doc.id}" style="margin-left:12px;font-weight:bold;"></span>
+        </td>
       </tr>`;
   }).join('');
 
@@ -62,19 +85,22 @@ app.get('/admin', basicAuth, async (req, res) => {
   <title>問い合わせ管理画面</title>
   <style>
     body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
-    header { background: #2c3e50; color: white; padding: 16px 24px; }
+    header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
     header h1 { margin: 0; font-size: 20px; }
+    header button { background:#3498db;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:14px; }
     .container { padding: 24px; }
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
     th { background: #2c3e50; color: white; padding: 12px 16px; text-align: left; }
     td { padding: 12px 16px; border-bottom: 1px solid #eee; }
-    tr:last-child td { border-bottom: none; }
     tr:hover td { background: #f9f9f9; }
     .count { margin-bottom: 16px; color: #666; }
   </style>
 </head>
 <body>
-  <header><h1>📋 問い合わせ管理画面</h1></header>
+  <header>
+    <h1>📋 問い合わせ管理画面</h1>
+    <button onclick="location.reload()">🔄 更新</button>
+  </header>
   <div class="container">
     <p class="count">件数：${snapshot.size} 件</p>
     <table>
@@ -84,6 +110,7 @@ app.get('/admin', basicAuth, async (req, res) => {
           <th>送信者ID</th>
           <th>メッセージ</th>
           <th>ステータス</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -91,8 +118,57 @@ app.get('/admin', basicAuth, async (req, res) => {
       </tbody>
     </table>
   </div>
+  <script>
+    function openReply(id, senderId, btn) {
+      const row = document.getElementById('reply-' + id);
+      row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+    }
+    function closeReply(id) {
+      document.getElementById('reply-' + id).style.display = 'none';
+    }
+    async function sendReply(docId, senderId) {
+      const text = document.getElementById('text-' + docId).value;
+      const result = document.getElementById('result-' + docId);
+      if (!text.trim()) { result.textContent = '⚠️ メッセージを入力してください'; result.style.color='orange'; return; }
+      result.textContent = '送信中...'; result.style.color='gray';
+      try {
+        const res = await fetch('/admin/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId, senderId, message: text })
+        });
+        const data = await res.json();
+        if (data.success) {
+          result.textContent = '✅ 送信完了！'; result.style.color='green';
+          document.getElementById('text-' + docId).value = '';
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          result.textContent = '❌ 送信失敗: ' + data.error; result.style.color='red';
+        }
+      } catch(e) {
+        result.textContent = '❌ エラー: ' + e.message; result.style.color='red';
+      }
+    }
+  </script>
 </body>
 </html>`);
+});
+
+// 返信API
+app.post('/admin/reply', basicAuth, async (req, res) => {
+  const { docId, senderId, message } = req.body;
+  try {
+    await sendMessage(senderId, message);
+    await db.collection('messages').doc(docId).update({
+      status: '対応済み',
+      repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+      replyMessage: message
+    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('返信エラー:', err);
+    res.json({ success: false, error: err.message });
+  }
 });
 
 // Webhook認証
