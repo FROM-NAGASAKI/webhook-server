@@ -14,12 +14,10 @@ const db = admin.firestore();
 const VERIFY_TOKEN = 'union_support_verify_2024';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
-// パスワードハッシュ化
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// Basic認証ミドルウェア
 async function basicAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Basic ')) {
@@ -35,6 +33,8 @@ async function basicAuth(req, res, next) {
     const adminData = snapshot.docs[0].data();
     if (adminData.password === hashPassword(pass)) {
       req.adminId = id;
+      req.adminDisplayName = adminData.displayName || id;
+      req.adminSignature = adminData.signature || '';
       return next();
     }
   }
@@ -42,6 +42,8 @@ async function basicAuth(req, res, next) {
   const allAdmins = await db.collection('admins').get();
   if (allAdmins.empty && id === 'from-nagasaki-admin' && pass === 'fngs-4301') {
     req.adminId = id;
+    req.adminDisplayName = id;
+    req.adminSignature = '';
     return next();
   }
 
@@ -49,7 +51,6 @@ async function basicAuth(req, res, next) {
   return res.status(401).send('IDまたはパスワードが違います');
 }
 
-// 送信者の名前を取得
 async function getSenderName(senderId) {
   try {
     const url = `https://graph.facebook.com/v19.0/${senderId}?fields=name&access_token=${PAGE_ACCESS_TOKEN}`;
@@ -71,11 +72,10 @@ app.get('/admin', basicAuth, async (req, res) => {
   const rows = snapshot.docs.map(doc => {
     const d = doc.data();
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const name = d.senderName || '不明';
-    const replyMessage = d.replyMessage || '―';
+    const replyMessage = d.replyMessage ? d.replyMessage.replace(/\n/g, '<br>') : '―';
     const replyAdmin = d.replyAdmin || '―';
 
     return `
@@ -99,7 +99,11 @@ app.get('/admin', basicAuth, async (req, res) => {
           <textarea id="text-${doc.id}" rows="3"
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
             placeholder="返信メッセージを入力..."></textarea>
-          <br><br>
+          <br>
+          <small style="color:#888;margin-top:4px;display:block;">
+            ※ 送信時に署名が自動付加されます
+          </small>
+          <br>
           <button onclick="sendReply('${doc.id}', '${d.senderId}')"
             style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">
             送信
@@ -203,6 +207,8 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     return `
       <tr>
         <td>${d.userId}</td>
+        <td>${d.displayName || '―'}</td>
+        <td>${d.signature ? d.signature.replace(/\n/g, '<br>') : '―'}</td>
         <td>${d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明'}</td>
         <td>
           <button onclick="deleteUser('${doc.id}', '${d.userId}')"
@@ -229,10 +235,13 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     .card { background:white; border-radius:8px; padding:24px; box-shadow:0 2px 8px rgba(0,0,0,0.1); margin-bottom:24px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
     th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; }
-    td { padding:12px 16px; border-bottom:1px solid #eee; }
-    input { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:200px; }
+    td { padding:12px 16px; border-bottom:1px solid #eee; vertical-align:top; }
+    input[type=text], input[type=password] { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:180px; }
+    textarea { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:300px; }
     button.add { background:#27ae60;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px; }
     .msg { margin-top:12px; font-weight:bold; }
+    .form-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; max-width:700px; }
+    label { display:block; margin-bottom:4px; font-size:13px; color:#555; font-weight:bold; }
   </style>
 </head>
 <body>
@@ -246,17 +255,34 @@ app.get('/admin/users', basicAuth, async (req, res) => {
   <div class="container">
     <div class="card">
       <h2 style="margin-top:0;">管理者を追加</h2>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-        <input type="text" id="newId" placeholder="ユーザーID">
-        <input type="password" id="newPass" placeholder="パスワード">
-        <button class="add" onclick="addUser()">追加</button>
+      <div class="form-grid">
+        <div>
+          <label>ユーザーID *</label>
+          <input type="text" id="newId" placeholder="例：yamada">
+        </div>
+        <div>
+          <label>パスワード *</label>
+          <input type="password" id="newPass" placeholder="パスワード">
+        </div>
+        <div>
+          <label>表示名</label>
+          <input type="text" id="newDisplayName" placeholder="例：村上 太郎">
+        </div>
+        <div>
+          <label>署名</label>
+          <textarea id="newSignature" rows="3" placeholder="例：担当：村上&#10;From長崎サポート&#10;TEL: 095-XXX-XXXX"></textarea>
+        </div>
       </div>
+      <br>
+      <button class="add" onclick="addUser()">追加</button>
       <p class="msg" id="addMsg"></p>
     </div>
     <table>
       <thead>
         <tr>
           <th>ユーザーID</th>
+          <th>表示名</th>
+          <th>署名</th>
           <th>登録日時</th>
           <th>操作</th>
         </tr>
@@ -268,13 +294,15 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     async function addUser() {
       const userId = document.getElementById('newId').value.trim();
       const password = document.getElementById('newPass').value.trim();
+      const displayName = document.getElementById('newDisplayName').value.trim();
+      const signature = document.getElementById('newSignature').value.trim();
       const msg = document.getElementById('addMsg');
       if (!userId || !password) { msg.textContent = '⚠️ IDとパスワードを入力してください'; msg.style.color='orange'; return; }
       msg.textContent = '追加中...'; msg.style.color='gray';
       const res = await fetch('/admin/users/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, password })
+        body: JSON.stringify({ userId, password, displayName, signature })
       });
       const data = await res.json();
       if (data.success) {
@@ -302,13 +330,15 @@ app.get('/admin/users', basicAuth, async (req, res) => {
 
 // 管理者追加API
 app.post('/admin/users/add', basicAuth, async (req, res) => {
-  const { userId, password } = req.body;
+  const { userId, password, displayName, signature } = req.body;
   try {
     const existing = await db.collection('admins').where('userId', '==', userId).get();
     if (!existing.empty) return res.json({ success: false, error: 'このIDはすでに存在します' });
     await db.collection('admins').add({
       userId,
       password: hashPassword(password),
+      displayName: displayName || userId,
+      signature: signature || '',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     res.json({ success: true });
@@ -328,16 +358,22 @@ app.post('/admin/users/delete', basicAuth, async (req, res) => {
   }
 });
 
-// 返信API
+// 返信API（署名を自動付加）
 app.post('/admin/reply', basicAuth, async (req, res) => {
   const { docId, senderId, message } = req.body;
   try {
-    await sendMessage(senderId, message);
+    // 署名を付加したメッセージを作成
+    let fullMessage = message;
+    if (req.adminSignature) {
+      fullMessage = message + '\n\n' + req.adminSignature;
+    }
+
+    await sendMessage(senderId, fullMessage);
     await db.collection('messages').doc(docId).update({
       status: '対応済み',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      replyMessage: message,
-      replyAdmin: req.adminId
+      replyMessage: fullMessage,
+      replyAdmin: req.adminDisplayName || req.adminId
     });
     res.json({ success: true });
   } catch (err) {
