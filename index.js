@@ -1,6 +1,8 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const app = express();
 app.use(express.json());
 
@@ -73,6 +75,44 @@ function commonCss() {
     .container { padding: 24px; }`;
 }
 
+// ファイルをMeta APIにアップロード
+async function uploadFileToMeta(fileBuffer, mimeType, fileName) {
+  const FormData = (await import('node-fetch')).default;
+  const fetch = (await import('node-fetch')).default;
+
+  const formData = new (require('form-data'))();
+  formData.append('message', JSON.stringify({ attachment: { type: getAttachmentType(mimeType), payload: { is_reusable: true } } }));
+  formData.append('filedata', fileBuffer, { filename: fileName, contentType: mimeType });
+
+  const response = await fetch(
+    `https://graph.facebook.com/v19.0/me/message_attachments?access_token=${PAGE_ACCESS_TOKEN}`,
+    { method: 'POST', body: formData, headers: formData.getHeaders() }
+  );
+  const data = await response.json();
+  return data.attachment_id;
+}
+
+function getAttachmentType(mimeType) {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
+// 添付ファイル付きメッセージ送信
+async function sendAttachment(recipientId, attachmentId, attachmentType) {
+  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: recipientId },
+      message: { attachment: { type: attachmentType, payload: { attachment_id: attachmentId } } }
+    })
+  });
+  return await response.json();
+}
+
 // 問い合わせ一覧
 app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages')
@@ -118,13 +158,22 @@ app.get('/admin', basicAuth, async (req, res) => {
         <td colspan="9" style="padding:12px;">
           <textarea id="text-${doc.id}" rows="3"
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
-            placeholder="返信メッセージを入力..."></textarea>
-          <br><small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small><br>
-          <button onclick="sendReply('${doc.id}', '${d.senderId}')"
-            style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
-          <button onclick="closeReply('${doc.id}')"
-            style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
-          <span id="result-${doc.id}" style="margin-left:12px;font-weight:bold;"></span>
+            placeholder="返信メッセージを入力（任意）..."></textarea>
+          <br>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
+            <input type="file" id="file-${doc.id}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+              style="font-size:13px;">
+            <small style="color:#888;">画像・PDF・Word・Excel（最大25MB）</small>
+          </div>
+          <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
+          <div style="margin-top:10px;">
+            <button onclick="sendReply('${doc.id}', '${d.senderId}')"
+              style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
+            <button onclick="closeReply('${doc.id}')"
+              style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
+            <span id="result-${doc.id}" style="margin-left:12px;font-weight:bold;"></span>
+          </div>
         </td>
       </tr>`;
   }).join('');
@@ -138,12 +187,11 @@ app.get('/admin', basicAuth, async (req, res) => {
   <style>
     ${commonCss()}
     .search-bar { background:white; border-radius:8px; padding:16px 20px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.1); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-    .search-bar input { padding:9px 14px; border:1px solid #ccc; border-radius:6px; font-size:14px; width:280px; outline:none; }
-    .search-bar input:focus { border-color:#2980b9; box-shadow:0 0 0 2px rgba(41,128,185,0.2); }
+    .search-bar input[type=text] { padding:9px 14px; border:1px solid #ccc; border-radius:6px; font-size:14px; width:280px; outline:none; }
+    .search-bar input[type=text]:focus { border-color:#2980b9; box-shadow:0 0 0 2px rgba(41,128,185,0.2); }
     .search-bar select { padding:9px 14px; border:1px solid #ccc; border-radius:6px; font-size:14px; outline:none; }
     .search-bar button { padding:9px 16px; border:none; border-radius:6px; cursor:pointer; font-size:14px; }
     .btn-clear { background:#ecf0f1; color:#555; }
-    .btn-clear:hover { background:#bdc3c7; }
     .search-count { color:#666; font-size:14px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); min-width:1100px; }
     th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; white-space:nowrap; }
@@ -190,14 +238,11 @@ app.get('/admin', basicAuth, async (req, res) => {
         const searchData = row.getAttribute('data-search') || '';
         const statusCell = row.querySelector('td:nth-child(8)');
         const rowStatus = statusCell ? statusCell.textContent.trim() : '';
-        const matchKeyword = !keyword || searchData.includes(keyword);
-        const matchStatus = !status || rowStatus === status;
-        const show = matchKeyword && matchStatus;
+        const show = (!keyword || searchData.includes(keyword)) && (!status || rowStatus === status);
         row.classList.toggle('hidden', !show);
         const replyRow = row.nextElementSibling;
         if (replyRow && replyRow.id && replyRow.id.startsWith('reply-')) {
-          if (!show) replyRow.classList.add('hidden');
-          else replyRow.classList.remove('hidden');
+          replyRow.classList.toggle('hidden', !show);
         }
         if (show) visible++;
       });
@@ -214,20 +259,39 @@ app.get('/admin', basicAuth, async (req, res) => {
       r.style.display = r.style.display === 'none' ? 'table-row' : 'none';
     }
     function closeReply(id) { document.getElementById('reply-' + id).style.display = 'none'; }
+
     async function sendReply(docId, senderId) {
       const text = document.getElementById('text-' + docId).value;
+      const fileInput = document.getElementById('file-' + docId);
       const result = document.getElementById('result-' + docId);
-      if (!text.trim()) { result.textContent = '⚠️ メッセージを入力してください'; result.style.color = 'orange'; return; }
+
+      if (!text.trim() && (!fileInput.files || fileInput.files.length === 0)) {
+        result.textContent = '⚠️ メッセージまたはファイルを入力してください';
+        result.style.color = 'orange'; return;
+      }
+
       result.textContent = '送信中...'; result.style.color = 'gray';
+
       try {
-        const res = await fetch('/admin/reply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docId, senderId, message: text })
-        });
+        const formData = new FormData();
+        formData.append('docId', docId);
+        formData.append('senderId', senderId);
+        formData.append('message', text);
+        if (fileInput.files && fileInput.files.length > 0) {
+          formData.append('file', fileInput.files[0]);
+        }
+
+        const res = await fetch('/admin/reply', { method: 'POST', body: formData });
         const data = await res.json();
-        if (data.success) { result.textContent = '✅ 送信完了！'; result.style.color = 'green'; setTimeout(() => location.reload(), 1500); }
-        else { result.textContent = '❌ 送信失敗: ' + data.error; result.style.color = 'red'; }
-      } catch(e) { result.textContent = '❌ エラー: ' + e.message; result.style.color = 'red'; }
+        if (data.success) {
+          result.textContent = '✅ 送信完了！'; result.style.color = 'green';
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          result.textContent = '❌ 送信失敗: ' + data.error; result.style.color = 'red';
+        }
+      } catch(e) {
+        result.textContent = '❌ エラー: ' + e.message; result.style.color = 'red';
+      }
     }
   </script>
 </body>
@@ -237,7 +301,6 @@ app.get('/admin', basicAuth, async (req, res) => {
 // ユーザー一覧
 app.get('/admin/contacts', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
-
   const users = {};
   snapshot.docs.forEach(doc => {
     const d = doc.data();
@@ -249,7 +312,6 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
     if (d.status === '未対応') users[sid].unread++;
   });
 
-  // プロフィール情報を一括取得
   const senderIds = Object.keys(users);
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
@@ -259,52 +321,31 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
 
   const rows = Object.values(users).map(u => {
     const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const unreadBadge = u.unread > 0
-      ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>`
-      : '';
+    const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
     const profile = profileMap[u.senderId] || {};
-    const workplace = profile.workplace || '―';
-    const residenceStatus = profile.residenceStatus || '―';
     return `
       <tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
         <td><strong>${u.senderName}</strong>${unreadBadge}</td>
-        <td>${workplace}</td>
-        <td>${residenceStatus}</td>
+        <td>${profile.workplace || '―'}</td>
+        <td>${profile.residenceStatus || '―'}</td>
         <td>${u.lastMessage}</td>
         <td>${lastDate}</td>
         <td>${u.count}</td>
       </tr>`;
   }).join('');
 
-  res.send(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ユーザー履歴</title>
-  <style>
-    ${commonCss()}
-    table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
-    th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; }
-    td { padding:14px 16px; border-bottom:1px solid #eee; }
-    tr:hover td { background:#f0f7ff; }
-  </style>
-</head>
-<body>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ユーザー履歴</title>
+  <style>${commonCss()}
+    table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+    th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;}
+    td{padding:14px 16px;border-bottom:1px solid #eee;}
+    tr:hover td{background:#f0f7ff;}
+  </style></head><body>
   <header><h1>👥 ユーザー履歴</h1>${navHtml()}</header>
   <div class="container">
-    <table>
-      <thead>
-        <tr>
-          <th>名前</th><th>所属事業所</th><th>在留資格</th>
-          <th>最新メッセージ</th><th>最終日時</th><th>件数</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>
-</body>
-</html>`);
+    <table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+  </div></body></html>`);
 });
 
 // ユーザー詳細・チャット履歴
@@ -355,7 +396,12 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
           <div style="max-width:70%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">
             <textarea id="text-${doc.id}" rows="3"
               style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;"
-              placeholder="返信メッセージを入力..."></textarea>
+              placeholder="返信メッセージを入力（任意）..."></textarea>
+            <div style="margin-top:8px;">
+              <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
+              <input type="file" id="file-${doc.id}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
+              <small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>
+            </div>
             <div style="margin-top:8px;">
               <button onclick="sendReply('${doc.id}', '${senderId}')"
                 style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
@@ -367,25 +413,18 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     return html;
   }).join('');
 
-  res.send(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${senderName} の履歴</title>
-  <style>
-    ${commonCss()}
-    .card { background:white; border-radius:8px; padding:20px 24px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
-    .user-info { display:flex; gap:32px; align-items:center; flex-wrap:wrap; }
-    .user-info .label { font-size:12px; color:#888; }
-    .user-info .value { font-size:15px; font-weight:bold; }
-    .profile-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:600px; }
-    label { display:block; margin-bottom:4px; font-size:13px; color:#555; font-weight:bold; }
-    input[type=text], input[type=date] { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:100%; box-sizing:border-box; }
-    button.save { background:#2980b9; color:white; border:none; padding:9px 20px; border-radius:4px; cursor:pointer; font-size:14px; margin-top:8px; }
-  </style>
-</head>
-<body>
+  <style>${commonCss()}
+    .card{background:white;border-radius:8px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+    .user-info{display:flex;gap:32px;align-items:center;flex-wrap:wrap;}
+    .user-info .label{font-size:12px;color:#888;}
+    .user-info .value{font-size:15px;font-weight:bold;}
+    .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;}
+    label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
+    input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}
+    button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}
+  </style></head><body>
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml()}</header>
   <div class="container">
     <div class="card">
@@ -435,23 +474,29 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
     }
     async function sendReply(docId, senderId) {
       const text = document.getElementById('text-' + docId).value;
+      const fileInput = document.getElementById('file-' + docId);
       const result = document.getElementById('result-' + docId);
-      if (!text.trim()) { result.textContent = '⚠️ メッセージを入力してください'; result.style.color = 'orange'; return; }
+      if (!text.trim() && (!fileInput.files || fileInput.files.length === 0)) {
+        result.textContent = '⚠️ メッセージまたはファイルを入力してください';
+        result.style.color = 'orange'; return;
+      }
       result.textContent = '送信中...'; result.style.color = 'gray';
       try {
-        const res = await fetch('/admin/reply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docId, senderId, message: text })
-        });
+        const formData = new FormData();
+        formData.append('docId', docId);
+        formData.append('senderId', senderId);
+        formData.append('message', text);
+        if (fileInput.files && fileInput.files.length > 0) {
+          formData.append('file', fileInput.files[0]);
+        }
+        const res = await fetch('/admin/reply', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.success) { result.textContent = '✅ 送信完了！'; result.style.color = 'green'; setTimeout(() => location.reload(), 1500); }
         else { result.textContent = '❌ 送信失敗: ' + data.error; result.style.color = 'red'; }
       } catch(e) { result.textContent = '❌ エラー: ' + e.message; result.style.color = 'red'; }
     }
     window.onload = () => window.scrollTo(0, document.body.scrollHeight);
-  </script>
-</body>
-</html>`);
+  </script></body></html>`);
 });
 
 // プロフィール保存API
@@ -469,6 +514,69 @@ app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
   }
 });
 
+// 返信API（テキスト＋ファイル対応）
+app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
+  const { docId, senderId, message } = req.body;
+  try {
+    // テキスト返信
+    if (message && message.trim()) {
+      let fullMessage = message;
+      if (req.adminSignature) fullMessage = message + '\n\n' + req.adminSignature;
+      await sendMessage(senderId, fullMessage);
+
+      await db.collection('messages').doc(docId).update({
+        status: '対応済み',
+        repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+        replyMessage: fullMessage,
+        replyAdmin: req.adminDisplayName || req.adminId
+      });
+    }
+
+    // ファイル送信
+    if (req.file) {
+      const FormDataLib = require('form-data');
+      const formData = new FormDataLib();
+      const attachmentType = getAttachmentType(req.file.mimetype);
+
+      formData.append('message', JSON.stringify({
+        attachment: { type: attachmentType, payload: { is_reusable: true } }
+      }));
+      formData.append('filedata', req.file.buffer, {
+        filename: req.file.originalname,
+        contentType: req.file.mimetype
+      });
+
+      const uploadRes = await fetch(
+        `https://graph.facebook.com/v19.0/me/message_attachments?access_token=${PAGE_ACCESS_TOKEN}`,
+        { method: 'POST', body: formData, headers: formData.getHeaders() }
+      );
+      const uploadData = await uploadRes.json();
+
+      if (uploadData.attachment_id) {
+        await sendAttachment(senderId, uploadData.attachment_id, attachmentType);
+
+        // ファイルのみの場合もステータス更新
+        if (!message || !message.trim()) {
+          await db.collection('messages').doc(docId).update({
+            status: '対応済み',
+            repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+            replyMessage: `[添付ファイル: ${req.file.originalname}]`,
+            replyAdmin: req.adminDisplayName || req.adminId
+          });
+        }
+      } else {
+        console.error('ファイルアップロードエラー:', uploadData);
+        return res.json({ success: false, error: 'ファイルのアップロードに失敗しました: ' + JSON.stringify(uploadData) });
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('返信エラー:', err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // 管理者一覧
 app.get('/admin/users', basicAuth, async (req, res) => {
   const snapshot = await db.collection('admins').orderBy('createdAt', 'desc').get();
@@ -476,8 +584,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     const d = doc.data();
     return `
       <tr>
-        <td>${d.userId}</td>
-        <td>${d.displayName || '―'}</td>
+        <td>${d.userId}</td><td>${d.displayName || '―'}</td>
         <td style="white-space:pre-wrap;">${d.signature || '―'}</td>
         <td>${d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明'}</td>
         <td><button onclick="deleteUser('${doc.id}', '${d.userId}')"
@@ -528,7 +635,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
       if(data.success){msg.textContent='✅ 追加しました';msg.style.color='green';setTimeout(()=>location.reload(),1000);}
       else{msg.textContent='❌ '+data.error;msg.style.color='red';}
     }
-    async function deleteUser(docId, userId) {
+    async function deleteUser(docId,userId){
       if(!confirm(userId+' を削除しますか？'))return;
       const res=await fetch('/admin/users/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({docId})});
       const data=await res.json();
@@ -551,9 +658,7 @@ app.post('/admin/users/add', basicAuth, async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
 // 管理者削除API
@@ -562,28 +667,7 @@ app.post('/admin/users/delete', basicAuth, async (req, res) => {
   try {
     await db.collection('admins').doc(docId).delete();
     res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
-});
-
-// 返信API
-app.post('/admin/reply', basicAuth, async (req, res) => {
-  const { docId, senderId, message } = req.body;
-  try {
-    let fullMessage = message;
-    if (req.adminSignature) fullMessage = message + '\n\n' + req.adminSignature;
-    await sendMessage(senderId, fullMessage);
-    await db.collection('messages').doc(docId).update({
-      status: '対応済み',
-      repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      replyMessage: fullMessage,
-      replyAdmin: req.adminDisplayName || req.adminId
-    });
-    res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
 // Webhook認証
