@@ -13,7 +13,7 @@ app.use(session({
   secret: 'from-nagasaki-secret-2024',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 8 * 60 * 60 * 1000 } // 8時間
+  cookie: { maxAge: 8 * 60 * 60 * 1000 }
 }));
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -27,19 +27,22 @@ function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// セッション認証ミドルウェア
 async function requireAuth(req, res, next) {
   if (req.session && req.session.adminId) return next();
   res.redirect('/login');
 }
 
-async function getSenderName(senderId) {
+// 送信者情報（名前＋プロフィール画像）取得
+async function getSenderInfo(senderId) {
   try {
-    const url = `https://graph.facebook.com/v19.0/${senderId}?fields=name&access_token=${PAGE_ACCESS_TOKEN}`;
+    const url = `https://graph.facebook.com/v19.0/${senderId}?fields=name,picture&access_token=${PAGE_ACCESS_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.name || '不明';
-  } catch (err) { return '不明'; }
+    return {
+      name: data.name || '不明',
+      picture: data.picture?.data?.url || null
+    };
+  } catch (err) { return { name: '不明', picture: null }; }
 }
 
 function getAttachmentType(mimeType) {
@@ -64,22 +67,21 @@ async function sendMessage(recipientId, text) {
 function attachmentHtml(d) {
   if (!d.attachmentName) return '';
   if (d.attachmentType === 'image' && d.attachmentUrl) {
-    const url = d.attachmentUrl
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    return '<div style="margin-top:8px;">'
-      + '<img src="' + url + '" alt="' + d.attachmentName + '"'
-      + ' style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #ddd;"'
-      + ' onerror="this.style.display=\'none\'">'
-      + '</div>';
+    const url = d.attachmentUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return '<div style="margin-top:8px;"><img src="' + url + '" alt="' + d.attachmentName + '" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #ddd;" onerror="this.style.display=\'none\'"></div>';
   }
-  if (d.attachmentType === 'image') {
-    return '<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">🖼️ ' + d.attachmentName + '</div>';
-  }
+  if (d.attachmentType === 'image') return '<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">🖼️ ' + d.attachmentName + '</div>';
   const icon = d.attachmentType === 'video' ? '🎥' : d.attachmentType === 'audio' ? '🎵' : '📄';
   return '<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">' + icon + ' ' + d.attachmentName + '</div>';
+}
+
+// アバター画像HTML
+function avatarHtml(name, pictureUrl) {
+  if (pictureUrl) {
+    return `<img src="${pictureUrl}" alt="${name}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">`;
+  }
+  const initial = name ? name.charAt(0).toUpperCase() : '?';
+  return `<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">${initial}</span>`;
 }
 
 function navHtml(adminName) {
@@ -107,6 +109,7 @@ app.get('/login', (req, res) => {
   if (req.session && req.session.adminId) return res.redirect('/admin');
   const error = req.query.error ? '<p style="color:#e74c3c;margin-bottom:16px;">IDまたはパスワードが違います</p>' : '';
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ログイン</title>
+  <link rel="icon" href="https://www.facebook.com/favicon.ico">
   <style>
     body{font-family:sans-serif;margin:0;background:#2c3e50;display:flex;justify-content:center;align-items:center;min-height:100vh;}
     .card{background:white;border-radius:12px;padding:40px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.3);}
@@ -129,8 +132,7 @@ app.get('/login', (req, res) => {
       <input type="password" name="password" placeholder="パスワードを入力" required>
       <button type="submit">ログイン</button>
     </form>
-  </div>
-  </body></html>`);
+  </div></body></html>`);
 });
 
 // ログイン処理
@@ -147,7 +149,6 @@ app.post('/login', async (req, res) => {
         return res.redirect('/admin');
       }
     }
-    // 初期管理者フォールバック
     const allAdmins = await db.collection('admins').get();
     if (allAdmins.empty && userId === 'from-nagasaki-admin' && password === 'fngs-4301') {
       req.session.adminId = userId;
@@ -156,17 +157,11 @@ app.post('/login', async (req, res) => {
       return res.redirect('/admin');
     }
     res.redirect('/login?error=1');
-  } catch (err) {
-    console.error('ログインエラー:', err);
-    res.redirect('/login?error=1');
-  }
+  } catch (err) { res.redirect('/login?error=1'); }
 });
 
 // ログアウト
-app.get('/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/login');
-});
+app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/login'); });
 
 // 問い合わせ一覧
 app.get('/admin', requireAuth, async (req, res) => {
@@ -184,6 +179,7 @@ app.get('/admin', requireAuth, async (req, res) => {
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const name = d.senderName || '不明';
+    const picture = d.senderPicture || null;
     const profile = profileMap[d.senderId] || {};
     const workplace = profile.workplace || '―';
     const residenceStatus = profile.residenceStatus || '―';
@@ -194,10 +190,11 @@ app.get('/admin', requireAuth, async (req, res) => {
       const icon = d.attachmentType === 'image' ? '🖼️' : '📄';
       replyHtml += '<br><span style="font-size:12px;color:#2980b9;">' + icon + ' ' + d.attachmentName + '</span>';
     }
+
     return `
       <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
         <td>${date}</td>
-        <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;">${name}</a></td>
+        <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">${avatarHtml(name, picture)}${name}</a></td>
         <td>${workplace}</td><td>${residenceStatus}</td>
         <td>${d.message || ''}</td>
         <td>${replyHtml}</td>
@@ -224,7 +221,9 @@ app.get('/admin', requireAuth, async (req, res) => {
       </tr>`;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>問い合わせ管理画面</title>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+  <link rel="icon" href="https://www.facebook.com/favicon.ico">
+  <title>問い合わせ管理画面</title>
   <style>${commonCss()}
     .search-bar{background:white;border-radius:8px;padding:16px 20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
     .search-bar input[type=text]{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:280px;outline:none;}
@@ -233,7 +232,7 @@ app.get('/admin', requireAuth, async (req, res) => {
     .btn-clear{background:#ecf0f1;color:#555;} .search-count{color:#666;font-size:14px;}
     table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);min-width:1100px;}
     th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;white-space:nowrap;}
-    td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:top;max-width:180px;word-break:break-all;}
+    td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:middle;max-width:180px;word-break:break-all;}
     tr.msg-row:hover td{background:#f9f9f9;} .hidden{display:none !important;}
   </style></head><body>
   <header><h1>📋 問い合わせ管理画面</h1>${navHtml(req.session.adminDisplayName)}</header>
@@ -300,7 +299,7 @@ app.get('/admin/contacts', requireAuth, async (req, res) => {
   const users = {};
   snapshot.docs.forEach(doc => {
     const d = doc.data(); const sid = d.senderId;
-    if (!users[sid]) users[sid] = { senderId: sid, senderName: d.senderName || '不明', count: 0, unread: 0, lastMessage: d.message || '', lastDate: d.createdAt };
+    if (!users[sid]) users[sid] = { senderId: sid, senderName: d.senderName || '不明', senderPicture: d.senderPicture || null, count: 0, unread: 0, lastMessage: d.message || '', lastDate: d.createdAt };
     users[sid].count++;
     if (d.status === '未対応') users[sid].unread++;
   });
@@ -315,12 +314,14 @@ app.get('/admin/contacts', requireAuth, async (req, res) => {
     const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
     const profile = profileMap[u.senderId] || {};
     return `<tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
-      <td><strong>${u.senderName}</strong>${unreadBadge}</td>
+      <td><div style="display:flex;align-items:center;">${avatarHtml(u.senderName, u.senderPicture)}<strong>${u.senderName}</strong>${unreadBadge}</div></td>
       <td>${profile.workplace || '―'}</td><td>${profile.residenceStatus || '―'}</td>
       <td>${u.lastMessage}</td><td>${lastDate}</td><td>${u.count}</td>
     </tr>`;
   }).join('');
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>ユーザー履歴</title>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+  <link rel="icon" href="https://www.facebook.com/favicon.ico">
+  <title>ユーザー履歴</title>
   <style>${commonCss()} table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
   th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:14px 16px;border-bottom:1px solid #eee;} tr:hover td{background:#f0f7ff;}</style>
   </head><body><header><h1>👥 ユーザー履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
@@ -336,7 +337,9 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
     db.collection('contacts').doc(senderId).get()
   ]);
   if (msgSnapshot.empty) return res.status(404).send('ユーザーが見つかりません');
-  const senderName = msgSnapshot.docs[0].data().senderName || '不明';
+  const firstData = msgSnapshot.docs[0].data();
+  const senderName = firstData.senderName || '不明';
+  const senderPicture = firstData.senderPicture || null;
   const totalCount = msgSnapshot.size;
   const unreadCount = msgSnapshot.docs.filter(d => d.data().status === '未対応').length;
   const profile = contactDoc.exists ? contactDoc.data() : {};
@@ -346,11 +349,13 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-    let html = `<div style="display:flex;justify-content:flex-start;margin-bottom:16px;"><div style="max-width:60%;">
-      <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
-      <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">${d.message || ''}</div>
-      <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
-    </div></div>`;
+    let html = `<div style="display:flex;justify-content:flex-start;margin-bottom:16px;gap:8px;">
+      ${avatarHtml(senderName, senderPicture)}
+      <div style="max-width:60%;">
+        <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
+        <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">${d.message || ''}</div>
+        <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
+      </div></div>`;
     if (d.replyMessage || d.attachmentName) {
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
       const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
@@ -378,7 +383,9 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
     return html;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>${senderName} の履歴</title>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+  <link rel="icon" href="https://www.facebook.com/favicon.ico">
+  <title>${senderName} の履歴</title>
   <style>${commonCss()}
     .card{background:white;border-radius:8px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
     .user-info{display:flex;gap:32px;align-items:center;flex-wrap:wrap;}
@@ -391,6 +398,7 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
   <div class="container">
     <div class="card"><div class="user-info">
+      <div>${avatarHtml(senderName, senderPicture)}</div>
       <div><div class="label">名前</div><div class="value">${senderName}</div></div>
       <div><div class="label">送信者ID</div><div class="value" style="font-size:13px;">${senderId}</div></div>
       <div><div class="label">問い合わせ件数</div><div class="value">${totalCount} 件</div></div>
@@ -491,9 +499,7 @@ app.post('/admin/reply', requireAuth, upload.single('file'), async (req, res) =>
           try {
             const urlRes = await fetch(`https://graph.facebook.com/v19.0/${axiosRes.data.message_id}/attachments?access_token=${PAGE_ACCESS_TOKEN}`);
             const urlData = await urlRes.json();
-            if (urlData.data && urlData.data[0] && urlData.data[0].image_data) {
-              attachmentUrl = urlData.data[0].image_data.url;
-            }
+            if (urlData.data && urlData.data[0] && urlData.data[0].image_data) attachmentUrl = urlData.data[0].image_data.url;
           } catch (e) { console.error('URL取得失敗:', e); }
         }
         const updateData = {
@@ -529,7 +535,9 @@ app.get('/admin/users', requireAuth, async (req, res) => {
       <td><button onclick="deleteUser('${doc.id}','${d.userId}')" style="background:#e74c3c;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">削除</button></td>
     </tr>`;
   }).join('');
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>管理者管理</title>
+  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+  <link rel="icon" href="https://www.facebook.com/favicon.ico">
+  <title>管理者管理</title>
   <style>${commonCss()} .card{background:white;border-radius:8px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.1);margin-bottom:24px;}
   table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
   th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:top;}
@@ -611,8 +619,15 @@ app.post('/webhook', async (req, res) => {
       if (event && event.message && !event.message.is_echo) {
         const senderId = event.sender.id;
         const messageText = event.message.text;
-        const senderName = await getSenderName(senderId);
-        await db.collection('messages').add({ senderId, senderName, message: messageText, status: '未対応', createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        const senderInfo = await getSenderInfo(senderId);
+        await db.collection('messages').add({
+          senderId,
+          senderName: senderInfo.name,
+          senderPicture: senderInfo.picture,
+          message: messageText,
+          status: '未対応',
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
         await sendMessage(senderId, 'お問い合わせありがとうございます。担当者より折り返しご連絡いたします。');
       }
     }
