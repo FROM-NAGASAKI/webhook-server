@@ -82,16 +82,22 @@ async function sendMessage(recipientId, text) {
 function attachmentHtml(d) {
   if (!d.attachmentName) return '';
   if (d.attachmentType === 'image' && d.attachmentUrl) {
+    const safeUrl = d.attachmentUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     return `<div style="margin-top:8px;">
-      <img src="${d.attachmentUrl}" alt="${d.attachmentName}"
+      <img src="${safeUrl}" alt="${d.attachmentName}"
         style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
-        onclick="window.open('${d.attachmentUrl}','_blank')"
-        onerror="this.style.display='none';this.nextSibling.style.display='block'">
+        onclick="window.open(this.src,'_blank')"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
       <div style="display:none;background:#f0f0f0;padding:8px;border-radius:4px;font-size:13px;">
-        📎 ${d.attachmentName}
+        🖼️ ${d.attachmentName}
       </div>
     </div>`;
   }
+  const icon = d.attachmentType === 'image' ? '🖼️' : d.attachmentType === 'video' ? '🎥' : d.attachmentType === 'audio' ? '🎵' : '📄';
+  return `<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">
+    ${icon} ${d.attachmentName}
+  </div>`;
+}
   const icon = d.attachmentType === 'image' ? '🖼️' : d.attachmentType === 'video' ? '🎥' : d.attachmentType === 'audio' ? '🎵' : '📄';
   return `<div style="margin-top:8px;background:#f0f0f0;padding:8px 12px;border-radius:4px;font-size:13px;">
     ${icon} ${d.attachmentName}
