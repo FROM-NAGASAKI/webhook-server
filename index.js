@@ -83,22 +83,44 @@ app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages')
     .orderBy('createdAt', 'desc').limit(100).get();
 
-  const rows = snapshot.docs.map(doc => {
+  // プロフィール情報を一括取得
+  const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
+  const profileMap = {};
+  await Promise.all(senderIds.map(async sid => {
+    const doc = await db.collection('contacts').doc(sid).get();
+    if (doc.exists) profileMap[sid] = doc.data();
+  }));
+
+  const rowsData = snapshot.docs.map(doc => {
     const d = doc.data();
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
-    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const name = d.senderName || '不明';
-    const replyMessage = d.replyMessage ? d.replyMessage.replace(/\n/g, '<br>') : '―';
-    const replyAdmin = d.replyAdmin || '―';
+    const replyMessage = d.replyMessage || '';
+    const replyAdmin = d.replyAdmin || '';
+    const profile = profileMap[d.senderId] || {};
+    const passportName = profile.passportName || '';
+    const workplace = profile.workplace || '';
+    const residenceStatus = profile.residenceStatus || '';
+
+    // 検索用データ属性
+    const searchData = [name, d.message || '', passportName, workplace, residenceStatus]
+      .join(' ').toLowerCase();
+
+    return { doc, d, date, status, name, replyMessage, replyAdmin, passportName, workplace, residenceStatus, searchData };
+  });
+
+  const rows = rowsData.map(({ doc, d, date, status, name, replyMessage, replyAdmin, searchData }) => {
+    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
+    const replyHtml = replyMessage ? replyMessage.replace(/\n/g, '<br>') : '―';
     return `
-      <tr>
+      <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}">
         <td>${date}</td>
         <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;">${name}</a></td>
         <td>${d.senderId || ''}</td>
         <td>${d.message || ''}</td>
-        <td>${replyMessage}</td>
-        <td>${replyAdmin}</td>
+        <td>${replyHtml}</td>
+        <td>${replyAdmin || '―'}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
         <td>
           <button onclick="openReply('${doc.id}')"
@@ -120,37 +142,124 @@ app.get('/admin', basicAuth, async (req, res) => {
       </tr>`;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>問い合わせ管理画面</title>
-  <style>${commonCss()}
+  res.send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>問い合わせ管理画面</title>
+  <style>
+    ${commonCss()}
+    .search-bar { background:white; border-radius:8px; padding:16px 20px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.1); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .search-bar input { padding:9px 14px; border:1px solid #ccc; border-radius:6px; font-size:14px; width:280px; outline:none; }
+    .search-bar input:focus { border-color:#2980b9; box-shadow:0 0 0 2px rgba(41,128,185,0.2); }
+    .search-bar select { padding:9px 14px; border:1px solid #ccc; border-radius:6px; font-size:14px; outline:none; }
+    .search-bar button { padding:9px 16px; border:none; border-radius:6px; cursor:pointer; font-size:14px; }
+    .btn-clear { background:#ecf0f1; color:#555; }
+    .btn-clear:hover { background:#bdc3c7; }
+    .search-count { color:#666; font-size:14px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); min-width:900px; }
     th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; white-space:nowrap; }
     td { padding:12px 16px; border-bottom:1px solid #eee; vertical-align:top; max-width:200px; word-break:break-all; }
-    tr:hover td { background:#f9f9f9; } .count { margin-bottom:16px; color:#666; }
-  </style></head><body>
-  <header><h1>📋 問い合わせ管理画面</h1>${navHtml()}</header>
+    tr.msg-row:hover td { background:#f9f9f9; }
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📋 問い合わせ管理画面</h1>
+    ${navHtml()}
+  </header>
   <div class="container" style="overflow-x:auto;">
-    <p class="count">件数：${snapshot.size} 件</p>
-    <table><thead><tr>
-      <th>受信日時</th><th>名前</th><th>送信者ID</th><th>メッセージ</th>
-      <th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
-    </tr></thead><tbody>${rows}</tbody></table>
+
+    <!-- 検索バー -->
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・プロフィールで検索..." oninput="filterRows()">
+      <select id="statusFilter" onchange="filterRows()">
+        <option value="">すべてのステータス</option>
+        <option value="未対応">未対応</option>
+        <option value="対応済み">対応済み</option>
+      </select>
+      <button class="btn-clear" onclick="clearSearch()">✕ クリア</button>
+      <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>受信日時</th><th>名前</th><th>送信者ID</th><th>メッセージ</th>
+          <th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="msgTable">${rows}</tbody>
+    </table>
   </div>
+
   <script>
-    function openReply(id) { const r=document.getElementById('reply-'+id); r.style.display=r.style.display==='none'?'table-row':'none'; }
-    function closeReply(id) { document.getElementById('reply-'+id).style.display='none'; }
-    async function sendReply(docId, senderId) {
-      const text=document.getElementById('text-'+docId).value;
-      const result=document.getElementById('result-'+docId);
-      if(!text.trim()){result.textContent='⚠️ メッセージを入力してください';result.style.color='orange';return;}
-      result.textContent='送信中...';result.style.color='gray';
-      try {
-        const res=await fetch('/admin/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({docId,senderId,message:text})});
-        const data=await res.json();
-        if(data.success){result.textContent='✅ 送信完了！';result.style.color='green';setTimeout(()=>location.reload(),1500);}
-        else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
-      }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
+    const totalCount = ${snapshot.size};
+
+    function filterRows() {
+      const keyword = document.getElementById('searchInput').value.toLowerCase().trim();
+      const status = document.getElementById('statusFilter').value;
+      const rows = document.querySelectorAll('tr.msg-row');
+      let visible = 0;
+
+      rows.forEach(row => {
+        const searchData = row.getAttribute('data-search') || '';
+        const statusCell = row.querySelector('td:nth-child(7)');
+        const rowStatus = statusCell ? statusCell.textContent.trim() : '';
+
+        const matchKeyword = !keyword || searchData.includes(keyword);
+        const matchStatus = !status || rowStatus === status;
+
+        const show = matchKeyword && matchStatus;
+        row.classList.toggle('hidden', !show);
+
+        // 返信フォーム行も連動して非表示
+        const replyRow = row.nextElementSibling;
+        if (replyRow && replyRow.id && replyRow.id.startsWith('reply-')) {
+          if (!show) replyRow.classList.add('hidden');
+          else replyRow.classList.remove('hidden');
+        }
+
+        if (show) visible++;
+      });
+
+      document.getElementById('searchCount').textContent =
+        keyword || status ? \`\${visible} 件 / 全 \${totalCount} 件\` : \`全 \${totalCount} 件\`;
     }
-  </script></body></html>`);
+
+    function clearSearch() {
+      document.getElementById('searchInput').value = '';
+      document.getElementById('statusFilter').value = '';
+      filterRows();
+    }
+
+    function openReply(id) {
+      const r = document.getElementById('reply-' + id);
+      r.style.display = r.style.display === 'none' ? 'table-row' : 'none';
+    }
+    function closeReply(id) {
+      document.getElementById('reply-' + id).style.display = 'none';
+    }
+    async function sendReply(docId, senderId) {
+      const text = document.getElementById('text-' + docId).value;
+      const result = document.getElementById('result-' + docId);
+      if (!text.trim()) { result.textContent = '⚠️ メッセージを入力してください'; result.style.color = 'orange'; return; }
+      result.textContent = '送信中...'; result.style.color = 'gray';
+      try {
+        const res = await fetch('/admin/reply', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId, senderId, message: text })
+        });
+        const data = await res.json();
+        if (data.success) { result.textContent = '✅ 送信完了！'; result.style.color = 'green'; setTimeout(() => location.reload(), 1500); }
+        else { result.textContent = '❌ 送信失敗: ' + data.error; result.style.color = 'red'; }
+      } catch(e) { result.textContent = '❌ エラー: ' + e.message; result.style.color = 'red'; }
+    }
+  </script>
+</body>
+</html>`);
 });
 
 // ユーザー一覧
@@ -197,7 +306,6 @@ app.get('/admin/contacts', basicAuth, async (req, res) => {
 // ユーザー詳細・チャット履歴
 app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
   const senderId = req.params.senderId;
-
   const [msgSnapshot, contactDoc] = await Promise.all([
     db.collection('messages').where('senderId', '==', senderId).orderBy('createdAt', 'asc').get(),
     db.collection('contacts').doc(senderId).get()
@@ -209,8 +317,6 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
   const senderName = firstDoc.senderName || '不明';
   const totalCount = msgSnapshot.size;
   const unreadCount = msgSnapshot.docs.filter(d => d.data().status === '未対応').length;
-
-  // プロフィール情報
   const profile = contactDoc.exists ? contactDoc.data() : {};
 
   const messages = msgSnapshot.docs.map(doc => {
@@ -260,19 +366,17 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${senderName} の履歴</title>
   <style>${commonCss()}
-    .card { background:white; border-radius:8px; padding:20px 24px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
-    .user-info { display:flex; gap:32px; align-items:center; flex-wrap:wrap; }
-    .user-info .label { font-size:12px; color:#888; }
-    .user-info .value { font-size:15px; font-weight:bold; }
-    .profile-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:600px; }
-    label { display:block; margin-bottom:4px; font-size:13px; color:#555; font-weight:bold; }
-    input[type=text], input[type=date] { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:100%; box-sizing:border-box; }
-    button.save { background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px; }
+    .card{background:white;border-radius:8px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+    .user-info{display:flex;gap:32px;align-items:center;flex-wrap:wrap;}
+    .user-info .label{font-size:12px;color:#888;}
+    .user-info .value{font-size:15px;font-weight:bold;}
+    .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;}
+    label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
+    input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}
+    button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}
   </style></head><body>
   <header><h1>💬 ${senderName} の履歴</h1>${navHtml()}</header>
   <div class="container">
-
-    <!-- ユーザー情報 -->
     <div class="card">
       <div class="user-info">
         <div><div class="label">名前</div><div class="value">${senderName}</div></div>
@@ -282,33 +386,17 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
         <div><a href="/admin/contacts" style="color:#2980b9;text-decoration:none;">← 一覧に戻る</a></div>
       </div>
     </div>
-
-    <!-- プロフィールフォーム -->
     <div class="card">
       <h3 style="margin-top:0;color:#2c3e50;">📝 プロフィール情報</h3>
       <div class="profile-grid">
-        <div>
-          <label>パスポートネーム</label>
-          <input type="text" id="passportName" value="${profile.passportName || ''}" placeholder="例：MURAKAMI TARO">
-        </div>
-        <div>
-          <label>所属事業所</label>
-          <input type="text" id="workplace" value="${profile.workplace || ''}" placeholder="例：株式会社FROM長崎">
-        </div>
-        <div>
-          <label>在留資格</label>
-          <input type="text" id="residenceStatus" value="${profile.residenceStatus || ''}" placeholder="例：技能実習">
-        </div>
-        <div>
-          <label>入国日</label>
-          <input type="date" id="entryDate" value="${profile.entryDate || ''}">
-        </div>
+        <div><label>パスポートネーム</label><input type="text" id="passportName" value="${profile.passportName || ''}" placeholder="例：MURAKAMI TARO"></div>
+        <div><label>所属事業所</label><input type="text" id="workplace" value="${profile.workplace || ''}" placeholder="例：株式会社FROM長崎"></div>
+        <div><label>在留資格</label><input type="text" id="residenceStatus" value="${profile.residenceStatus || ''}" placeholder="例：技能実習"></div>
+        <div><label>入国日</label><input type="date" id="entryDate" value="${profile.entryDate || ''}"></div>
       </div>
       <button class="save" onclick="saveProfile()">💾 保存</button>
       <span id="profileMsg" style="margin-left:12px;font-weight:bold;"></span>
     </div>
-
-    <!-- チャット履歴 -->
     <div class="card">
       <h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>
       ${messages}
@@ -326,8 +414,7 @@ app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
       };
       try {
         const res = await fetch('/admin/contacts/${senderId}/profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
         });
         const result = await res.json();
