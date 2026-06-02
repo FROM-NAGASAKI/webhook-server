@@ -19,7 +19,7 @@ function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// Basic認証ミドルウェア（Firestoreで管理者確認）
+// Basic認証ミドルウェア
 async function basicAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Basic ')) {
@@ -30,7 +30,6 @@ async function basicAuth(req, res, next) {
   const decoded = Buffer.from(base64, 'base64').toString('utf-8');
   const [id, pass] = decoded.split(':');
 
-  // Firestoreで管理者確認
   const snapshot = await db.collection('admins').where('userId', '==', id).get();
   if (!snapshot.empty) {
     const adminData = snapshot.docs[0].data();
@@ -40,7 +39,6 @@ async function basicAuth(req, res, next) {
     }
   }
 
-  // 初期管理者（Firestoreに誰もいない場合のフォールバック）
   const allAdmins = await db.collection('admins').get();
   if (allAdmins.empty && id === 'from-nagasaki-admin' && pass === 'fngs-4301') {
     req.adminId = id;
@@ -73,25 +71,31 @@ app.get('/admin', basicAuth, async (req, res) => {
   const rows = snapshot.docs.map(doc => {
     const d = doc.data();
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+    const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const name = d.senderName || '不明';
+    const replyMessage = d.replyMessage || '―';
+    const replyAdmin = d.replyAdmin || '―';
+
     return `
       <tr>
         <td>${date}</td>
         <td>${name}</td>
         <td>${d.senderId || ''}</td>
         <td>${d.message || ''}</td>
+        <td>${replyMessage}</td>
+        <td>${replyAdmin}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
         <td>
-          <button onclick="openReply('${doc.id}', '${d.senderId}', this)"
+          <button onclick="openReply('${doc.id}')"
             style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">
             返信
           </button>
         </td>
       </tr>
       <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
-        <td colspan="6" style="padding:12px;">
+        <td colspan="8" style="padding:12px;">
           <textarea id="text-${doc.id}" rows="3"
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
             placeholder="返信メッセージを入力..."></textarea>
@@ -119,12 +123,12 @@ app.get('/admin', basicAuth, async (req, res) => {
     body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
     header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
     header h1 { margin: 0; font-size: 20px; }
-    nav a { color:white; text-decoration:none; margin-left:16px; padding:8px 16px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
+    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
     nav a:hover { background:rgba(255,255,255,0.25); }
-    .container { padding: 24px; }
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    th { background: #2c3e50; color: white; padding: 12px 16px; text-align: left; }
-    td { padding: 12px 16px; border-bottom: 1px solid #eee; }
+    .container { padding: 24px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); min-width: 900px; }
+    th { background: #2c3e50; color: white; padding: 12px 16px; text-align: left; white-space: nowrap; }
+    td { padding: 12px 16px; border-bottom: 1px solid #eee; vertical-align: top; max-width: 200px; word-break: break-all; }
     tr:hover td { background: #f9f9f9; }
     .count { margin-bottom: 16px; color: #666; }
   </style>
@@ -147,6 +151,8 @@ app.get('/admin', basicAuth, async (req, res) => {
           <th>名前</th>
           <th>送信者ID</th>
           <th>メッセージ</th>
+          <th>返信メッセージ</th>
+          <th>返信した管理者</th>
           <th>ステータス</th>
           <th>操作</th>
         </tr>
@@ -217,7 +223,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
     header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
     header h1 { margin: 0; font-size: 20px; }
-    nav a { color:white; text-decoration:none; margin-left:16px; padding:8px 16px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
+    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
     nav a:hover { background:rgba(255,255,255,0.25); }
     .container { padding: 24px; }
     .card { background:white; border-radius:8px; padding:24px; box-shadow:0 2px 8px rgba(0,0,0,0.1); margin-bottom:24px; }
@@ -330,7 +336,8 @@ app.post('/admin/reply', basicAuth, async (req, res) => {
     await db.collection('messages').doc(docId).update({
       status: '対応済み',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      replyMessage: message
+      replyMessage: message,
+      replyAdmin: req.adminId
     });
     res.json({ success: true });
   } catch (err) {
