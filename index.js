@@ -2,7 +2,8 @@ const express = require('express');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const multer = require('multer');
-const FormDataLib = require('form-data');
+const axios = require('axios');
+const FormData = require('form-data');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const app = express();
 app.use(express.json());
@@ -371,7 +372,7 @@ app.post('/admin/contacts/:senderId/profile', basicAuth, async (req, res) => {
   } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
-// 返信API（テキスト＋ファイル直接送信）
+// 返信API（axios使用）
 app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
   const docId = req.body.docId;
   const senderId = req.body.senderId;
@@ -392,12 +393,12 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
       });
     }
 
-    // ファイル送信（/me/messages に直接multipart）
+    // ファイル送信（axios使用）
     if (req.file) {
       const attachmentType = getAttachmentType(req.file.mimetype);
       console.log('ファイル送信中:', req.file.originalname, attachmentType, senderId);
 
-      const formData1 = new FormDataLib();
+      const formData1 = new FormData();
       formData1.append('recipient', JSON.stringify({ id: senderId }));
       formData1.append('message', JSON.stringify({
         attachment: { type: attachmentType, payload: { is_reusable: false } }
@@ -407,14 +408,14 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
         contentType: req.file.mimetype
       });
 
-      const sendRes = await fetch(
+      const axiosRes = await axios.post(
         `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-        { method: 'POST', body: formData1, headers: formData1.getHeaders() }
+        formData1,
+        { headers: formData1.getHeaders() }
       );
-      const sendData = await sendRes.json();
-      console.log('ファイル送信結果:', JSON.stringify(sendData));
+      console.log('ファイル送信結果:', JSON.stringify(axiosRes.data));
 
-      if (sendData.message_id) {
+      if (axiosRes.data.message_id) {
         if (!message || !message.trim()) {
           await db.collection('messages').doc(docId).update({
             status: '対応済み',
@@ -424,15 +425,16 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
           });
         }
       } else {
-        console.error('ファイル送信エラー:', sendData);
-        return res.json({ success: false, error: 'ファイル送信失敗: ' + JSON.stringify(sendData) });
+        console.error('ファイル送信エラー:', axiosRes.data);
+        return res.json({ success: false, error: 'ファイル送信失敗: ' + JSON.stringify(axiosRes.data) });
       }
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error('返信エラー:', err);
-    res.json({ success: false, error: err.message });
+    const errMsg = err.response ? JSON.stringify(err.response.data) : err.message;
+    console.error('返信エラー:', errMsg);
+    res.json({ success: false, error: errMsg });
   }
 });
 
