@@ -62,6 +62,27 @@ async function getSenderName(senderId) {
   }
 }
 
+// ナビゲーションHTML
+function navHtml() {
+  return `
+    <nav>
+      <a href="/admin">📋 問い合わせ</a>
+      <a href="/admin/contacts">👥 ユーザー履歴</a>
+      <a href="/admin/users">👤 管理者</a>
+    </nav>`;
+}
+
+// 共通CSS
+function commonCss() {
+  return `
+    body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
+    header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
+    header h1 { margin: 0; font-size: 20px; }
+    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
+    nav a:hover { background:rgba(255,255,255,0.25); }
+    .container { padding: 24px; }`;
+}
+
 // 管理画面（問い合わせ一覧）
 app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages')
@@ -81,7 +102,7 @@ app.get('/admin', basicAuth, async (req, res) => {
     return `
       <tr>
         <td>${date}</td>
-        <td>${name}</td>
+        <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;">${name}</a></td>
         <td>${d.senderId || ''}</td>
         <td>${d.message || ''}</td>
         <td>${replyMessage}</td>
@@ -100,9 +121,7 @@ app.get('/admin', basicAuth, async (req, res) => {
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
             placeholder="返信メッセージを入力..."></textarea>
           <br>
-          <small style="color:#888;margin-top:4px;display:block;">
-            ※ 送信時に署名が自動付加されます
-          </small>
+          <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
           <br>
           <button onclick="sendReply('${doc.id}', '${d.senderId}')"
             style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">
@@ -124,12 +143,7 @@ app.get('/admin', basicAuth, async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>問い合わせ管理画面</title>
   <style>
-    body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
-    header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
-    header h1 { margin: 0; font-size: 20px; }
-    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
-    nav a:hover { background:rgba(255,255,255,0.25); }
-    .container { padding: 24px; overflow-x: auto; }
+    ${commonCss()}
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); min-width: 900px; }
     th { background: #2c3e50; color: white; padding: 12px 16px; text-align: left; white-space: nowrap; }
     td { padding: 12px 16px; border-bottom: 1px solid #eee; vertical-align: top; max-width: 200px; word-break: break-all; }
@@ -140,13 +154,9 @@ app.get('/admin', basicAuth, async (req, res) => {
 <body>
   <header>
     <h1>📋 問い合わせ管理画面</h1>
-    <nav>
-      <a href="/admin">📋 問い合わせ</a>
-      <a href="/admin/users">👤 管理者</a>
-      <a href="#" onclick="location.reload()">🔄 更新</a>
-    </nav>
+    ${navHtml()}
   </header>
-  <div class="container">
+  <div class="container" style="overflow-x:auto;">
     <p class="count">件数：${snapshot.size} 件</p>
     <table>
       <thead>
@@ -199,6 +209,225 @@ app.get('/admin', basicAuth, async (req, res) => {
 </html>`);
 });
 
+// ユーザー一覧ページ
+app.get('/admin/contacts', basicAuth, async (req, res) => {
+  const snapshot = await db.collection('messages')
+    .orderBy('createdAt', 'desc')
+    .get();
+
+  // ユーザーごとに集計
+  const users = {};
+  snapshot.docs.forEach(doc => {
+    const d = doc.data();
+    const sid = d.senderId;
+    if (!users[sid]) {
+      users[sid] = {
+        senderId: sid,
+        senderName: d.senderName || '不明',
+        count: 0,
+        unread: 0,
+        lastMessage: d.message || '',
+        lastDate: d.createdAt
+      };
+    }
+    users[sid].count++;
+    if (d.status === '未対応') users[sid].unread++;
+  });
+
+  const rows = Object.values(users).map(u => {
+    const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+    const unreadBadge = u.unread > 0
+      ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>`
+      : '';
+    return `
+      <tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
+        <td><strong>${u.senderName}</strong>${unreadBadge}</td>
+        <td>${u.senderId}</td>
+        <td>${u.lastMessage}</td>
+        <td>${lastDate}</td>
+        <td>${u.count}</td>
+      </tr>`;
+  }).join('');
+
+  res.send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ユーザー履歴</title>
+  <style>
+    ${commonCss()}
+    table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+    th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; }
+    td { padding:14px 16px; border-bottom:1px solid #eee; }
+    tr:hover td { background:#f0f7ff; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>👥 ユーザー履歴</h1>
+    ${navHtml()}
+  </header>
+  <div class="container">
+    <table>
+      <thead>
+        <tr>
+          <th>名前</th>
+          <th>送信者ID</th>
+          <th>最新メッセージ</th>
+          <th>最終日時</th>
+          <th>件数</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+</body>
+</html>`);
+});
+
+// ユーザー詳細・履歴ページ（チャット形式）
+app.get('/admin/contacts/:senderId', basicAuth, async (req, res) => {
+  const senderId = req.params.senderId;
+  const snapshot = await db.collection('messages')
+    .where('senderId', '==', senderId)
+    .orderBy('createdAt', 'asc')
+    .get();
+
+  if (snapshot.empty) return res.status(404).send('ユーザーが見つかりません');
+
+  const firstDoc = snapshot.docs[0].data();
+  const senderName = firstDoc.senderName || '不明';
+  const totalCount = snapshot.size;
+  const unreadCount = snapshot.docs.filter(d => d.data().status === '未対応').length;
+
+  const messages = snapshot.docs.map(doc => {
+    const d = doc.data();
+    const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+    const status = d.status || '未対応';
+    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
+
+    // ユーザーメッセージ（左）
+    let html = `
+      <div style="display:flex;justify-content:flex-start;margin-bottom:16px;">
+        <div style="max-width:60%;">
+          <div style="font-size:12px;color:#888;margin-bottom:4px;">${senderName} · ${date}</div>
+          <div style="background:white;border-radius:0 12px 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+            ${d.message || ''}
+          </div>
+          <div style="font-size:12px;margin-top:4px;color:${statusColor};">${status}</div>
+        </div>
+      </div>`;
+
+    // 返信メッセージ（右）
+    if (d.replyMessage) {
+      const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
+      html += `
+        <div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
+          <div style="max-width:60%;">
+            <div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">${d.replyAdmin || '管理者'} · ${repliedAt}</div>
+            <div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);white-space:pre-wrap;">${d.replyMessage}</div>
+          </div>
+        </div>`;
+    }
+
+    // 未対応の場合は返信フォーム
+    if (status === '未対応') {
+      html += `
+        <div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
+          <div style="max-width:70%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">
+            <textarea id="text-${doc.id}" rows="3"
+              style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;"
+              placeholder="返信メッセージを入力..."></textarea>
+            <div style="margin-top:8px;">
+              <button onclick="sendReply('${doc.id}', '${senderId}')"
+                style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">
+                送信
+              </button>
+              <span id="result-${doc.id}" style="font-weight:bold;"></span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    return html;
+  }).join('');
+
+  res.send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${senderName} の履歴</title>
+  <style>
+    ${commonCss()}
+    .user-info { background:white; border-radius:8px; padding:16px 24px; margin-bottom:24px; box-shadow:0 2px 8px rgba(0,0,0,0.1); display:flex; gap:32px; align-items:center; }
+    .user-info .label { font-size:12px; color:#888; }
+    .user-info .value { font-size:16px; font-weight:bold; }
+    .chat-area { background:white; border-radius:8px; padding:24px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>💬 ${senderName} の履歴</h1>
+    ${navHtml()}
+  </header>
+  <div class="container">
+    <div class="user-info">
+      <div>
+        <div class="label">名前</div>
+        <div class="value">${senderName}</div>
+      </div>
+      <div>
+        <div class="label">送信者ID</div>
+        <div class="value" style="font-size:13px;">${senderId}</div>
+      </div>
+      <div>
+        <div class="label">問い合わせ件数</div>
+        <div class="value">${totalCount} 件</div>
+      </div>
+      <div>
+        <div class="label">未対応</div>
+        <div class="value" style="color:${unreadCount > 0 ? '#e74c3c' : '#27ae60'}">${unreadCount} 件</div>
+      </div>
+      <div>
+        <a href="/admin/contacts" style="color:#2980b9;text-decoration:none;">← ユーザー一覧に戻る</a>
+      </div>
+    </div>
+    <div class="chat-area">
+      ${messages}
+    </div>
+  </div>
+  <script>
+    async function sendReply(docId, senderId) {
+      const text = document.getElementById('text-' + docId).value;
+      const result = document.getElementById('result-' + docId);
+      if (!text.trim()) { result.textContent = '⚠️ メッセージを入力してください'; result.style.color='orange'; return; }
+      result.textContent = '送信中...'; result.style.color='gray';
+      try {
+        const res = await fetch('/admin/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId, senderId, message: text })
+        });
+        const data = await res.json();
+        if (data.success) {
+          result.textContent = '✅ 送信完了！'; result.style.color='green';
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          result.textContent = '❌ 送信失敗: ' + data.error; result.style.color='red';
+        }
+      } catch(e) {
+        result.textContent = '❌ エラー: ' + e.message; result.style.color='red';
+      }
+    }
+    // 最下部にスクロール
+    window.onload = () => window.scrollTo(0, document.body.scrollHeight);
+  </script>
+</body>
+</html>`);
+});
+
 // 管理者一覧ページ
 app.get('/admin/users', basicAuth, async (req, res) => {
   const snapshot = await db.collection('admins').orderBy('createdAt', 'desc').get();
@@ -208,7 +437,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
       <tr>
         <td>${d.userId}</td>
         <td>${d.displayName || '―'}</td>
-        <td>${d.signature ? d.signature.replace(/\n/g, '<br>') : '―'}</td>
+        <td style="white-space:pre-wrap;">${d.signature || '―'}</td>
         <td>${d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明'}</td>
         <td>
           <button onclick="deleteUser('${doc.id}', '${d.userId}')"
@@ -226,12 +455,7 @@ app.get('/admin/users', basicAuth, async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>管理者管理</title>
   <style>
-    body { font-family: sans-serif; margin: 0; background: #f5f5f5; }
-    header { background: #2c3e50; color: white; padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; }
-    header h1 { margin: 0; font-size: 20px; }
-    nav a { color:white; text-decoration:none; margin-left:12px; padding:8px 14px; border-radius:4px; background:rgba(255,255,255,0.15); font-size:14px; }
-    nav a:hover { background:rgba(255,255,255,0.25); }
-    .container { padding: 24px; }
+    ${commonCss()}
     .card { background:white; border-radius:8px; padding:24px; box-shadow:0 2px 8px rgba(0,0,0,0.1); margin-bottom:24px; }
     table { width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
     th { background:#2c3e50; color:white; padding:12px 16px; text-align:left; }
@@ -240,38 +464,23 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     textarea { padding:8px 12px; border:1px solid #ccc; border-radius:4px; font-size:14px; width:300px; }
     button.add { background:#27ae60;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px; }
     .msg { margin-top:12px; font-weight:bold; }
-    .form-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; max-width:700px; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:700px; }
     label { display:block; margin-bottom:4px; font-size:13px; color:#555; font-weight:bold; }
   </style>
 </head>
 <body>
   <header>
     <h1>👤 管理者管理</h1>
-    <nav>
-      <a href="/admin">📋 問い合わせ</a>
-      <a href="/admin/users">👤 管理者</a>
-    </nav>
+    ${navHtml()}
   </header>
   <div class="container">
     <div class="card">
       <h2 style="margin-top:0;">管理者を追加</h2>
       <div class="form-grid">
-        <div>
-          <label>ユーザーID *</label>
-          <input type="text" id="newId" placeholder="例：yamada">
-        </div>
-        <div>
-          <label>パスワード *</label>
-          <input type="password" id="newPass" placeholder="パスワード">
-        </div>
-        <div>
-          <label>表示名</label>
-          <input type="text" id="newDisplayName" placeholder="例：村上 太郎">
-        </div>
-        <div>
-          <label>署名</label>
-          <textarea id="newSignature" rows="3" placeholder="例：担当：村上&#10;From長崎サポート&#10;TEL: 095-XXX-XXXX"></textarea>
-        </div>
+        <div><label>ユーザーID *</label><input type="text" id="newId" placeholder="例：yamada"></div>
+        <div><label>パスワード *</label><input type="password" id="newPass" placeholder="パスワード"></div>
+        <div><label>表示名</label><input type="text" id="newDisplayName" placeholder="例：村上 太郎"></div>
+        <div><label>署名</label><textarea id="newSignature" rows="3" placeholder="例：担当：村上&#10;From長崎サポート&#10;TEL: 095-XXX-XXXX"></textarea></div>
       </div>
       <br>
       <button class="add" onclick="addUser()">追加</button>
@@ -279,15 +488,9 @@ app.get('/admin/users', basicAuth, async (req, res) => {
     </div>
     <table>
       <thead>
-        <tr>
-          <th>ユーザーID</th>
-          <th>表示名</th>
-          <th>署名</th>
-          <th>登録日時</th>
-          <th>操作</th>
-        </tr>
+        <tr><th>ユーザーID</th><th>表示名</th><th>署名</th><th>登録日時</th><th>操作</th></tr>
       </thead>
-      <tbody id="userList">${rows}</tbody>
+      <tbody>${rows}</tbody>
     </table>
   </div>
   <script>
@@ -335,8 +538,7 @@ app.post('/admin/users/add', basicAuth, async (req, res) => {
     const existing = await db.collection('admins').where('userId', '==', userId).get();
     if (!existing.empty) return res.json({ success: false, error: 'このIDはすでに存在します' });
     await db.collection('admins').add({
-      userId,
-      password: hashPassword(password),
+      userId, password: hashPassword(password),
       displayName: displayName || userId,
       signature: signature || '',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -358,16 +560,12 @@ app.post('/admin/users/delete', basicAuth, async (req, res) => {
   }
 });
 
-// 返信API（署名を自動付加）
+// 返信API
 app.post('/admin/reply', basicAuth, async (req, res) => {
   const { docId, senderId, message } = req.body;
   try {
-    // 署名を付加したメッセージを作成
     let fullMessage = message;
-    if (req.adminSignature) {
-      fullMessage = message + '\n\n' + req.adminSignature;
-    }
-
+    if (req.adminSignature) fullMessage = message + '\n\n' + req.adminSignature;
     await sendMessage(senderId, fullMessage);
     await db.collection('messages').doc(docId).update({
       status: '対応済み',
@@ -404,9 +602,7 @@ app.post('/webhook', async (req, res) => {
         const messageText = event.message.text;
         const senderName = await getSenderName(senderId);
         await db.collection('messages').add({
-          senderId,
-          senderName,
-          message: messageText,
+          senderId, senderName, message: messageText,
           status: '未対応',
           createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
