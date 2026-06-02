@@ -536,6 +536,9 @@ app.post('/admin/reply', basicAuth, upload.single('file'), async (req, res) => {
     }
 
     // ファイル送信
+    console.log('req.file:', req.file);
+    console.log('req.files:', req.files);
+    console.log('req.body keys:', Object.keys(req.body));
     if (req.file) {
       const FormDataLib = require('form-data');
       const formData = new FormDataLib();
