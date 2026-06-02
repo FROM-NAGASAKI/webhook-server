@@ -80,6 +80,20 @@ function avatarHtml(name, pictureUrl, size) {
   return `<span style="display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:#3498db;color:white;font-size:${Math.floor(size*0.44)}px;font-weight:bold;vertical-align:middle;margin-right:8px;">${initial}</span>`;
 }
 
+// MessengerリンクHTML
+function messengerLinkHtml(senderId) {
+  return `<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+    <a href="https://m.me/${senderId}" target="_blank"
+      style="display:inline-flex;align-items:center;gap:6px;background:#0084ff;color:white;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:bold;">
+      💬 Messengerで開く
+    </a>
+    <a href="fb-messenger://user/${senderId}"
+      style="display:inline-flex;align-items:center;gap:6px;background:#25d366;color:white;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:bold;">
+      📱 アプリで開く（スマホ）
+    </a>
+  </div>`;
+}
+
 function navHtml(adminName) {
   return `<nav style="display:flex;align-items:center;gap:4px;">
     <a href="/admin">📋 問い合わせ</a>
@@ -179,14 +193,10 @@ app.get('/admin/messages/new', requireAuth, async (req, res) => {
       if (after && createdAtISO <= after) continue;
       const profile = profileMap[d.senderId] || {};
       messages.push({
-        docId: doc.id,
-        senderId: d.senderId,
-        senderName: d.senderName || '不明',
-        senderPicture: d.senderPicture || null,
-        message: d.message || '',
-        status: d.status || '未対応',
-        workplace: profile.workplace || '',
-        residenceStatus: profile.residenceStatus || '',
+        docId: doc.id, senderId: d.senderId,
+        senderName: d.senderName || '不明', senderPicture: d.senderPicture || null,
+        message: d.message || '', status: d.status || '未対応',
+        workplace: profile.workplace || '', residenceStatus: profile.residenceStatus || '',
         date: d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
         createdAtISO
       });
@@ -204,8 +214,6 @@ app.get('/admin', requireAuth, async (req, res) => {
     const doc = await db.collection('contacts').doc(sid).get();
     if (doc.exists) profileMap[sid] = doc.data();
   }));
-
-  // 最新メッセージのISO時刻
   const latestISO = snapshot.size > 0 && snapshot.docs[0].data().createdAt
     ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
 
@@ -289,13 +297,11 @@ app.get('/admin', requireAuth, async (req, res) => {
       <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
     </tr></thead><tbody id="msgTable">${rows}</tbody></table>
   </div>
-
   <script>
-    let totalCount = ${snapshot.size};
-    let lastISO = '${latestISO}';
-    let isRefreshing = false;
-    let countdown = 60;
-
+    let totalCount=${snapshot.size};
+    let lastISO='${latestISO}';
+    let isRefreshing=false;
+    let countdown=60;
     function filterRows(){
       const keyword=document.getElementById('searchInput').value.toLowerCase().trim();
       const status=document.getElementById('statusFilter').value;
@@ -316,7 +322,6 @@ app.get('/admin', requireAuth, async (req, res) => {
     function clearSearch(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';filterRows();}
     function openReply(id){const r=document.getElementById('reply-'+id);r.style.display=r.style.display==='none'?'table-row':'none';}
     function closeReply(id){document.getElementById('reply-'+id).style.display='none';}
-
     async function sendReply(docId,senderId){
       const text=document.getElementById('text-'+docId).value;
       const fileInput=document.getElementById('file-'+docId);
@@ -333,41 +338,35 @@ app.get('/admin', requireAuth, async (req, res) => {
         else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
       }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
     }
-
-    // 新着チェック
     async function checkNewMessages(){
-      if(isRefreshing) return;
-      isRefreshing = true;
+      if(isRefreshing)return;
+      isRefreshing=true;
       try{
-        const res = await fetch('/admin/messages/new?after=' + encodeURIComponent(lastISO));
-        const data = await res.json();
-        if(data.messages && data.messages.length > 0){
-          const tbody = document.getElementById('msgTable');
-          data.messages.forEach(msg => {
-            if(document.querySelector('[data-docid="' + msg.docId + '"]')) return;
+        const res=await fetch('/admin/messages/new?after='+encodeURIComponent(lastISO));
+        const data=await res.json();
+        if(data.messages&&data.messages.length>0){
+          const tbody=document.getElementById('msgTable');
+          data.messages.forEach(msg=>{
+            if(document.querySelector('[data-docid="'+msg.docId+'"]'))return;
             totalCount++;
-            const statusColor = msg.status === '未対応' ? '#e74c3c' : '#27ae60';
-            const avatar = msg.senderPicture
-              ? '<img src="' + msg.senderPicture + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">'
-              : '<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">' + (msg.senderName||'?').charAt(0).toUpperCase() + '</span>';
-
-            const newRow = document.createElement('tr');
-            newRow.className = 'msg-row new-message';
-            newRow.setAttribute('data-search', [msg.senderName||'', msg.message||'', msg.workplace||'', msg.residenceStatus||''].join(' ').toLowerCase());
-            newRow.setAttribute('data-docid', msg.docId);
-            newRow.innerHTML = \`
-              <td>\${msg.date}</td>
+            const statusColor=msg.status==='未対応'?'#e74c3c':'#27ae60';
+            const avatar=msg.senderPicture
+              ?'<img src="'+msg.senderPicture+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">'
+              :'<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">'+(msg.senderName||'?').charAt(0).toUpperCase()+'</span>';
+            const newRow=document.createElement('tr');
+            newRow.className='msg-row new-message';
+            newRow.setAttribute('data-search',[msg.senderName||'',msg.message||'',msg.workplace||'',msg.residenceStatus||''].join(' ').toLowerCase());
+            newRow.setAttribute('data-docid',msg.docId);
+            newRow.innerHTML=\`<td>\${msg.date}</td>
               <td><a href="/admin/contacts/\${msg.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">\${avatar}\${msg.senderName||'不明'}</a></td>
               <td>\${msg.workplace||'―'}</td><td>\${msg.residenceStatus||'―'}</td>
-              <td>\${msg.message||''}</td>
-              <td>―</td><td>―</td>
+              <td>\${msg.message||''}</td><td>―</td><td>―</td>
               <td style="color:\${statusColor};font-weight:bold;">\${msg.status}</td>
-              <td><button onclick="openReply('\${msg.docId}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>
-            \`;
-            const replyRow = document.createElement('tr');
-            replyRow.id = 'reply-' + msg.docId;
-            replyRow.style.cssText = 'display:none;background:#f0f7ff;';
-            replyRow.innerHTML = \`<td colspan="9" style="padding:12px;">
+              <td><button onclick="openReply('\${msg.docId}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>\`;
+            const replyRow=document.createElement('tr');
+            replyRow.id='reply-'+msg.docId;
+            replyRow.style.cssText='display:none;background:#f0f7ff;';
+            replyRow.innerHTML=\`<td colspan="9" style="padding:12px;">
               <textarea id="text-\${msg.docId}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
               <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
                 <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
@@ -378,33 +377,24 @@ app.get('/admin', requireAuth, async (req, res) => {
                 <button onclick="sendReply('\${msg.docId}','\${msg.senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
                 <button onclick="closeReply('\${msg.docId}')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
                 <span id="result-\${msg.docId}" style="margin-left:12px;font-weight:bold;"></span>
-              </div>
-            </td>\`;
-            tbody.insertBefore(replyRow, tbody.firstChild);
-            tbody.insertBefore(newRow, tbody.firstChild);
-            if(msg.createdAtISO > lastISO) lastISO = msg.createdAtISO;
+              </div></td>\`;
+            tbody.insertBefore(replyRow,tbody.firstChild);
+            tbody.insertBefore(newRow,tbody.firstChild);
+            if(msg.createdAtISO>lastISO)lastISO=msg.createdAtISO;
           });
-          document.getElementById('searchCount').textContent = '全 ' + totalCount + ' 件';
-          document.title = '🔔 新着 ' + data.messages.length + '件 | 問い合わせ管理画面';
-          setTimeout(()=>{ document.title = '📋 問い合わせ管理画面'; }, 5000);
+          document.getElementById('searchCount').textContent='全 '+totalCount+' 件';
+          document.title='🔔 新着 '+data.messages.length+'件 | 問い合わせ管理画面';
+          setTimeout(()=>{document.title='📋 問い合わせ管理画面';},5000);
         }
-      }catch(e){ console.error('自動更新エラー:', e); }
-      isRefreshing = false;
+      }catch(e){console.error('自動更新エラー:',e);}
+      isRefreshing=false;
     }
-
-    // 1分ごとに新着チェック
-    setInterval(checkNewMessages, 60000);
-
-    // カウントダウン表示
-    const indicator = document.createElement('div');
-    indicator.style.cssText = 'position:fixed;bottom:16px;right:16px;background:rgba(44,62,80,0.85);color:white;padding:8px 16px;border-radius:20px;font-size:12px;z-index:999;';
-    indicator.textContent = '🔄 次回更新: 60秒後';
+    setInterval(checkNewMessages,60000);
+    const indicator=document.createElement('div');
+    indicator.style.cssText='position:fixed;bottom:16px;right:16px;background:rgba(44,62,80,0.85);color:white;padding:8px 16px;border-radius:20px;font-size:12px;z-index:999;';
+    indicator.textContent='🔄 次回更新: 60秒後';
     document.body.appendChild(indicator);
-    setInterval(()=>{
-      countdown--;
-      if(countdown <= 0) countdown = 60;
-      indicator.textContent = '🔄 次回更新: ' + countdown + '秒後';
-    }, 1000);
+    setInterval(()=>{countdown--;if(countdown<=0)countdown=60;indicator.textContent='🔄 次回更新: '+countdown+'秒後';},1000);
   </script></body></html>`);
 });
 
@@ -519,7 +509,9 @@ app.get('/admin/contacts/:senderId', requireAuth, async (req, res) => {
       <div><div class="label">問い合わせ件数</div><div class="value">${totalCount} 件</div></div>
       <div><div class="label">未対応</div><div class="value" style="color:${unreadCount > 0 ? '#e74c3c' : '#27ae60'}">${unreadCount} 件</div></div>
       <div><a href="/admin/contacts" style="color:#2980b9;text-decoration:none;">← 一覧に戻る</a></div>
-    </div></div>
+    </div>
+    ${messengerLinkHtml(senderId)}
+    </div>
     <div class="card">
       <h3 style="margin-top:0;color:#2c3e50;">📝 プロフィール情報</h3>
       <div class="profile-grid">
