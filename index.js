@@ -1,6 +1,14 @@
 const express = require('express');
+const admin = require('firebase-admin');
 const app = express();
 app.use(express.json());
+
+// Firebase初期化
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+const db = admin.firestore();
 
 const VERIFY_TOKEN = 'union_support_verify_2024';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
@@ -14,12 +22,11 @@ app.get('/webhook', (req, res) => {
     console.log('Webhook認証成功');
     res.status(200).send(challenge);
   } else {
-    console.log('Webhook認証失敗');
     res.sendStatus(403);
   }
 });
 
-// メッセージ受信 & 自動返信
+// メッセージ受信・保存・自動返信
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   if (body.object === 'page') {
@@ -29,6 +36,15 @@ app.post('/webhook', async (req, res) => {
         const senderId = event.sender.id;
         const messageText = event.message.text;
         console.log('受信:', senderId, messageText);
+
+        // Firestoreに保存
+        await db.collection('messages').add({
+          senderId: senderId,
+          message: messageText,
+          status: '未対応',
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log('Firestoreに保存完了');
 
         // 自動返信
         await sendMessage(senderId, 'お問い合わせありがとうございます。担当者より折り返しご連絡いたします。');
@@ -47,7 +63,6 @@ async function sendMessage(recipientId, text) {
     recipient: { id: recipientId },
     message: { text: text }
   };
-
   try {
     const response = await fetch(url, {
       method: 'POST',
