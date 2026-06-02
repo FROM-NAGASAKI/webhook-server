@@ -33,6 +33,19 @@ function basicAuth(req, res, next) {
   return res.status(401).send('IDまたはパスワードが違います');
 }
 
+// 送信者の名前を取得
+async function getSenderName(senderId) {
+  try {
+    const url = `https://graph.facebook.com/v19.0/${senderId}?fields=name&access_token=${PAGE_ACCESS_TOKEN}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    return data.name || '不明';
+  } catch (err) {
+    console.error('名前取得失敗:', err);
+    return '不明';
+  }
+}
+
 // 管理画面
 app.get('/admin', basicAuth, async (req, res) => {
   const snapshot = await db.collection('messages')
@@ -45,22 +58,24 @@ app.get('/admin', basicAuth, async (req, res) => {
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const status = d.status || '未対応';
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
+    const name = d.senderName || '不明';
     return `
       <tr>
         <td>${date}</td>
+        <td>${name}</td>
         <td>${d.senderId || ''}</td>
         <td>${d.message || ''}</td>
         <td style="color:${statusColor};font-weight:bold;">${status}</td>
         <td>
-          <button onclick="openReply('${doc.id}', '${d.senderId}', this)" 
+          <button onclick="openReply('${doc.id}', '${d.senderId}', this)"
             style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">
             返信
           </button>
         </td>
       </tr>
       <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
-        <td colspan="5" style="padding:12px;">
-          <textarea id="text-${doc.id}" rows="3" 
+        <td colspan="6" style="padding:12px;">
+          <textarea id="text-${doc.id}" rows="3"
             style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;"
             placeholder="返信メッセージを入力..."></textarea>
           <br><br>
@@ -107,6 +122,7 @@ app.get('/admin', basicAuth, async (req, res) => {
       <thead>
         <tr>
           <th>受信日時</th>
+          <th>名前</th>
           <th>送信者ID</th>
           <th>メッセージ</th>
           <th>ステータス</th>
@@ -195,8 +211,13 @@ app.post('/webhook', async (req, res) => {
         const messageText = event.message.text;
         console.log('受信:', senderId, messageText);
 
+        // 名前を取得
+        const senderName = await getSenderName(senderId);
+        console.log('送信者名:', senderName);
+
         await db.collection('messages').add({
           senderId: senderId,
+          senderName: senderName,
           message: messageText,
           status: '未対応',
           createdAt: admin.firestore.FieldValue.serverTimestamp()
