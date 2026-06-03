@@ -42,8 +42,6 @@ router.post('/login', async (req, res) => {
   try {
     const snapshot = await db.collection('admins').where('userId', '==', userId).get();
     if (!snapshot.empty) {
-      const adminData = snapshot.docs[0].data();
-      if (adminData.password === hashPassword(password)) {
         req.session.adminId = userId;
         req.session.adminDisplayName = adminData.displayName || userId;
         req.session.adminSignature = adminData.signature || '';
