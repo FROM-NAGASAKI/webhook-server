@@ -37,6 +37,7 @@ router.get('/login', (req, res) => {
 // ログイン処理
 router.post('/login', async (req, res) => {
   const { userId, password } = req.body;
+  console.log('ログイン試行:', userId, !!password);
   const db = req.app.get('db');
   try {
     const snapshot = await db.collection('admins').where('userId', '==', userId).get();
@@ -57,7 +58,10 @@ router.post('/login', async (req, res) => {
       return res.redirect('/admin');
     }
     res.redirect('/login?error=1');
-  } catch (err) { res.redirect('/login?error=1'); }
+} catch (err) {
+    console.error('ログインエラー:', err.message);
+    res.redirect('/login?error=1');
+  }
 });
 
 // ログアウト
