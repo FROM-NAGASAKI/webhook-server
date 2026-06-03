@@ -72,4 +72,6 @@ router.get('/logout', (req, res) => {
   res.redirect('/login');
 });
 
+router.get("/privacy", (req, res) => { res.send("<!DOCTYPE html><html lang=\"ja\"><head><meta charset=\"UTF-8\"><title>Privacy Policy</title></head><body><div style=\"max-width:800px;margin:40px auto;padding:0 24px;font-family:sans-serif;\"><h1>Privacy Policy</h1><p>Last updated: June 3, 2026</p><h2>1. Information We Collect</h2><ul><li>Messages sent via Facebook Messenger</li><li>Facebook public profile (name, photo)</li><li>Message timestamps</li></ul><h2>2. How We Use Information</h2><ul><li>Responding to inquiries</li><li>Providing support services</li></ul><h2>3. Data Storage</h2><p>Data is stored in Google Firebase Firestore (asia-northeast1 region).</p><h2>4. Contact</h2><p>murakami@from-nagasaki.jp</p></div></body></html>"); });
+
 module.exports = router;
