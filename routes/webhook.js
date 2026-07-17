@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getSenderInfo, sendMessage } = require('../helpers/facebook');
+const { getSenderInfo } = require('../helpers/facebook');
 const VERIFY_TOKEN = 'union_support_verify_2024';
 
 // Webhook認証
@@ -27,7 +27,6 @@ router.post('/webhook', async (req, res) => {
         let senderInfo = { name: '不明', picture: null };
         try {
           senderInfo = await getSenderInfo(senderId);
-          console.log('プロフィール取得:', JSON.stringify(senderInfo));
         } catch (err) {
           console.error('プロフィール取得エラー:', err.message);
         }
@@ -43,12 +42,6 @@ router.post('/webhook', async (req, res) => {
           console.log('Firestore保存成功');
         } catch (err) {
           console.error('Firestore保存エラー:', err.message);
-        }
-        try {
-          await sendMessage(senderId, 'お問い合わせありがとうございます。担当者より折り返しご連絡いたします。');
-          console.log('返信送信成功');
-        } catch (err) {
-          console.error('返信送信エラー:', err.message);
         }
       }
     }
