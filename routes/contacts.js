@@ -29,8 +29,9 @@ router.get('/', requireAuth, async (req, res) => {
     const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
     const profile = profileMap[u.senderId] || {};
+    const displayName = (profile.passportName) ? profile.passportName : u.senderName;
     return `<tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
-      <td><div style="display:flex;align-items:center;">${avatarHtml(u.senderName, u.senderPicture)}<strong>${u.senderName}</strong>${unreadBadge}</div></td>
+      <td><div style="display:flex;align-items:center;">${avatarHtml(displayName, u.senderPicture)}<strong>${displayName}</strong>${unreadBadge}</div></td>
       <td>${profile.workplace || '—'}</td><td>${profile.residenceStatus || '—'}</td>
       <td>${u.lastMessage}</td><td>${lastDate}</td><td>${u.count}</td>
     </tr>`;
@@ -55,11 +56,11 @@ router.get('/:senderId', requireAuth, async (req, res) => {
   ]);
   if (msgSnapshot.empty) return res.status(404).send('ユーザーが見つかりません');
   const firstData = msgSnapshot.docs[0].data();
-  const senderName = firstData.senderName || '不明';
+  const profile = contactDoc.exists ? contactDoc.data() : {};
+  const senderName = profile.passportName || firstData.senderName || '不明';
   const senderPicture = firstData.senderPicture || null;
   const totalCount = msgSnapshot.size;
   const unreadCount = msgSnapshot.docs.filter(d => d.data().status === '未対応').length;
-  const profile = contactDoc.exists ? contactDoc.data() : {};
 
   const messages = msgSnapshot.docs.map(doc => {
     const d = doc.data();
@@ -144,8 +145,10 @@ async function saveProfile(){
   try{
     const res=await fetch('/admin/contacts/${senderId}/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     const result=await res.json();
-    if(result.success){msg.textContent='✅ 保存しました';msg.style.color='green';}
-    else{msg.textContent='✗ 保存失敗: '+result.error;msg.style.color='red';}
+    if(result.success){
+      msg.textContent='✅ 保存しました';msg.style.color='green';
+      setTimeout(()=>location.reload(),1000);
+    }else{msg.textContent='✗ 保存失敗: '+result.error;msg.style.color='red';}
   }catch(e){msg.textContent='✗ エラー: '+e.message;msg.style.color='red';}
 }
 async function sendReply(docId,senderId){
@@ -179,7 +182,6 @@ router.post('/:senderId/profile', requireAuth, async (req, res) => {
       { passportName, workplace, residenceStatus, entryDate, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
-    // messagesコレクションのsenderNameも更新
     if (passportName) {
       const msgSnapshot = await db.collection('messages').where('senderId', '==', senderId).get();
       const batch = db.batch();
