@@ -29,7 +29,7 @@ router.get('/', requireAuth, async (req, res) => {
     const lastDate = u.lastDate ? u.lastDate.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const unreadBadge = u.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${u.unread}</span>` : '';
     const profile = profileMap[u.senderId] || {};
-    const displayName = (profile.passportName) ? profile.passportName : u.senderName;
+    const displayName = profile.passportName || u.senderName;
     return `<tr onclick="location.href='/admin/contacts/${u.senderId}'" style="cursor:pointer;">
       <td><div style="display:flex;align-items:center;">${avatarHtml(displayName, u.senderPicture)}<strong>${displayName}</strong>${unreadBadge}</div></td>
       <td>${profile.workplace || '—'}</td><td>${profile.residenceStatus || '—'}</td>
@@ -112,6 +112,7 @@ router.get('/:senderId', requireAuth, async (req, res) => {
 .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;}
 label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}
 input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}
+textarea.profile-textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;resize:vertical;}
 button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}
 </style></head><body>
 <header><h1>💬 ${senderName} の履歴</h1>${navHtml(req.session.adminDisplayName)}</header>
@@ -132,6 +133,8 @@ button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-r
       <div><label>所属事業所</label><input type="text" id="workplace" value="${profile.workplace || ''}" placeholder="例：株式会社FROM長崎"></div>
       <div><label>在留資格</label><input type="text" id="residenceStatus" value="${profile.residenceStatus || ''}" placeholder="例：技能実習"></div>
       <div><label>入国日</label><input type="date" id="entryDate" value="${profile.entryDate || ''}"></div>
+      <div><label>検索用フォーム</label><input type="text" id="searchTags" value="${profile.searchTags || ''}" placeholder="例：長崎 技能実習 2024"></div>
+      <div><label>備考</label><textarea class="profile-textarea" id="notes" rows="3" placeholder="自由記述...">${profile.notes || ''}</textarea></div>
     </div>
     <button class="save" onclick="saveProfile()">💾 保存</button>
     <span id="profileMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>
@@ -141,7 +144,14 @@ button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-r
 <script>
 async function saveProfile(){
   const msg=document.getElementById('profileMsg');msg.textContent='保存中...';msg.style.color='gray';
-  const data={passportName:document.getElementById('passportName').value.trim(),workplace:document.getElementById('workplace').value.trim(),residenceStatus:document.getElementById('residenceStatus').value.trim(),entryDate:document.getElementById('entryDate').value};
+  const data={
+    passportName:document.getElementById('passportName').value.trim(),
+    workplace:document.getElementById('workplace').value.trim(),
+    residenceStatus:document.getElementById('residenceStatus').value.trim(),
+    entryDate:document.getElementById('entryDate').value,
+    searchTags:document.getElementById('searchTags').value.trim(),
+    notes:document.getElementById('notes').value.trim()
+  };
   try{
     const res=await fetch('/admin/contacts/${senderId}/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     const result=await res.json();
@@ -176,10 +186,10 @@ router.post('/:senderId/profile', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
   const { senderId } = req.params;
-  const { passportName, workplace, residenceStatus, entryDate } = req.body;
+  const { passportName, workplace, residenceStatus, entryDate, searchTags, notes } = req.body;
   try {
     await db.collection('contacts').doc(senderId).set(
-      { passportName, workplace, residenceStatus, entryDate, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { passportName, workplace, residenceStatus, entryDate, searchTags, notes, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
     if (passportName) {
