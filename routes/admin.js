@@ -6,7 +6,6 @@ const FormData = require('form-data');
 const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = require('../helpers/html');
-
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
@@ -31,7 +30,8 @@ router.get('/messages/new', requireAuth, async (req, res) => {
       const profile = profileMap[d.senderId] || {};
       messages.push({
         docId: doc.id, senderId: d.senderId,
-        senderName: d.senderName || '不明', senderPicture: d.senderPicture || null,
+        senderName: profile.passportName || d.senderName || '不明',
+        senderPicture: d.senderPicture || null,
         message: d.message || '', status: d.status || '未対応',
         workplace: profile.workplace || '', residenceStatus: profile.residenceStatus || '',
         date: d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
@@ -54,43 +54,41 @@ router.get('/', requireAuth, async (req, res) => {
   }));
   const latestISO = snapshot.size > 0 && snapshot.docs[0].data().createdAt
     ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
-
   const rows = snapshot.docs.map(doc => {
     const d = doc.data();
-    const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const status = d.status || '未対応';
-    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-    const name = d.senderName || '不明';
-    const picture = d.senderPicture || null;
     const profile = profileMap[d.senderId] || {};
-    const workplace = profile.workplace || '―';
-    const residenceStatus = profile.residenceStatus || '―';
-    const searchData = [name, d.message || '', profile.passportName || '', workplace, residenceStatus].join(' ').toLowerCase();
-    let replyHtml = '―';
-    if (d.replyMessage) replyHtml = d.replyMessage.replace(/\n/g, '<br>');
-    if (d.attachmentName) {
-      const icon = d.attachmentType === 'image' ? '🖼️' : '📄';
-      replyHtml += '<br><span style="font-size:12px;color:#2980b9;">' + icon + ' ' + d.attachmentName + '</span>';
-    }
-    return `
-      <tr class="msg-row" data-search="${searchData.replace(/"/g, '&quot;')}" data-docid="${doc.id}">
-        <td>${date}</td>
-        <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">${avatarHtml(name, picture)}${name}</a></td>
-        <td>${workplace}</td><td>${residenceStatus}</td>
-        <td>${d.message || ''}</td>
-        <td>${replyHtml}</td>
-        <td>${d.replyAdmin || '―'}</td>
-        <td style="color:${statusColor};font-weight:bold;">${status}</td>
-        <td><button onclick="openReply('${doc.id}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>
-      </tr>
+    const displayName = profile.passportName || d.senderName || '不明';
+    const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+    const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
+    const replyHtml = (d.replyMessage || d.attachmentName)
+      ? (d.replyMessage || '') + (d.attachmentName ? '<br><small>📎 ' + d.attachmentName + '</small>' : '')
+      : '—';
+
+    // 返信フォーム（未対応のみ）
+    const replyForm = d.status === '未対応' ? `
       <tr id="reply-${doc.id}" style="display:none;background:#f0f7ff;">
         <td colspan="9" style="padding:12px;">
-          <textarea id="text-${doc.id}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
-          <br>
-          <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>
+              <textarea id="text-${doc.id}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
+              <br><button onclick="translateAdminReply('${doc.id}')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>
+            </div>
+            <div>
+              <label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🌐 英語訳（自動）</label>
+              <textarea id="translated-${doc.id}" rows="3" style="width:80%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>
+            </div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <label style="font-size:12px;color:#555;font-weight:bold;">送信言語：</label>
+            <label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-${doc.id}" value="ja" checked> 日本語</label>
+            <label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-${doc.id}" value="en"> 英語訳</label>
+            <label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-${doc.id}" value="both"> 両方送信</label>
+          </div>
+          <div style="margin-bottom:8px;">
             <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
             <input type="file" id="file-${doc.id}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
-            <small style="color:#888;">画像・PDF・Word・Excel（最大25MB）</small>
+            <small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>
           </div>
           <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
           <div style="margin-top:10px;">
@@ -99,191 +97,215 @@ router.get('/', requireAuth, async (req, res) => {
             <span id="result-${doc.id}" style="margin-left:12px;font-weight:bold;"></span>
           </div>
         </td>
-      </tr>`;
+      </tr>` : '';
+
+    return `<tr class="msg-row" data-search="${displayName} ${profile.workplace || ''} ${d.message || ''} ${profile.residenceStatus || ''}" data-docid="${doc.id}">
+      <td>${date}</td>
+      <td><a href="/admin/contacts/${d.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">${avatarHtml(displayName, d.senderPicture)}${displayName}</a></td>
+      <td>${profile.workplace || '—'}</td>
+      <td>${profile.residenceStatus || '—'}</td>
+      <td>${d.message || '—'}</td>
+      <td>${replyHtml}</td>
+      <td>${d.replyAdmin || '—'}</td>
+      <td style="color:${statusColor};font-weight:bold;">${d.status || '未対応'}</td>
+      <td>${d.status === '未対応' ? '<button onclick="openReply(\'' + doc.id + '\')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>' : ''}</td>
+    </tr>${replyForm}`;
   }).join('');
 
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
-  <link rel="icon" href="https://www.facebook.com/favicon.ico">
-  <title>問い合わせ管理画面</title>
-  <style>${commonCss()}
-    .search-bar{background:white;border-radius:8px;padding:16px 20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
-    .search-bar input[type=text]{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:280px;outline:none;}
-    .search-bar select{padding:9px 14px;border:1px solid #ccc;border-radius:6px;font-size:14px;outline:none;}
-    .search-bar button{padding:9px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px;}
-    .btn-clear{background:#ecf0f1;color:#555;} .search-count{color:#666;font-size:14px;}
-    table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);min-width:1100px;}
-    th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;white-space:nowrap;}
-    td{padding:12px 16px;border-bottom:1px solid #eee;vertical-align:middle;max-width:180px;word-break:break-all;}
-    tr.msg-row:hover td{background:#f9f9f9;} .hidden{display:none !important;}
-    @keyframes highlight{0%{background:#fff9c4;}100%{background:transparent;}}
-    .new-message td{animation:highlight 3s ease-out;}
-  </style></head><body>
-  <header><h1>📋 問い合わせ管理画面</h1>${navHtml(req.session.adminDisplayName)}</header>
-  <div class="container" style="overflow-x:auto;">
-    <div class="search-bar">
-      <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
-      <select id="statusFilter" onchange="filterRows()">
-        <option value="">すべてのステータス</option>
-        <option value="未対応">未対応</option>
-        <option value="対応済み">対応済み</option>
-      </select>
-      <button class="btn-clear" onclick="clearSearch()">✕ クリア</button>
-      <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
-    </div>
-    <table><thead><tr>
+<link rel="icon" href="https://www.facebook.com/favicon.ico">
+<title>問い合わせ管理画面</title>
+<style>${commonCss()}
+.search-bar{display:flex;gap:8px;margin-bottom:16px;align-items:center;background:white;padding:12px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+.search-bar input{flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}
+.search-bar select{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}
+.btn-clear{padding:8px 14px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;}
+.search-count{font-size:14px;color:#555;}
+table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;font-size:13px;}
+td{padding:12px 16px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top;}
+tr.msg-row:hover td{background:#f8f9fa;}
+@keyframes highlight{0%{background:#fff3cd;}100%{background:white;}}
+.new-message td{animation:highlight 3s ease-out;}
+</style>
+</head><body>
+<header><h1>📋 問い合わせ管理画面</h1>${navHtml(req.session.adminDisplayName)}</header>
+<div class="container" style="overflow-x:auto;">
+  <div class="search-bar">
+    <input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">
+    <select id="statusFilter" onchange="filterRows()">
+      <option value="">すべてのステータス</option>
+      <option value="未対応">未対応</option>
+      <option value="対応済み">対応済み</option>
+    </select>
+    <button class="btn-clear" onclick="clearSearch()">× クリア</button>
+    <span class="search-count" id="searchCount">全 ${snapshot.size} 件</span>
+  </div>
+  <table>
+    <thead><tr>
       <th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>
       <th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>
-    </tr></thead><tbody id="msgTable">${rows}</tbody></table>
-  </div>
-  <script>
-    let totalCount=${snapshot.size};
-    let lastISO='${latestISO}';
-    let isRefreshing=false;
-    let countdown=60;
-    function filterRows(){
-      const keyword=document.getElementById('searchInput').value.toLowerCase().trim();
-      const status=document.getElementById('statusFilter').value;
-      const rows=document.querySelectorAll('tr.msg-row');
-      let visible=0;
-      rows.forEach(row=>{
-        const searchData=row.getAttribute('data-search')||'';
-        const statusCell=row.querySelector('td:nth-child(8)');
-        const rowStatus=statusCell?statusCell.textContent.trim():'';
-        const show=(!keyword||searchData.includes(keyword))&&(!status||rowStatus===status);
-        row.classList.toggle('hidden',!show);
-        const replyRow=row.nextElementSibling;
-        if(replyRow&&replyRow.id&&replyRow.id.startsWith('reply-'))replyRow.classList.toggle('hidden',!show);
-        if(show)visible++;
-      });
-      document.getElementById('searchCount').textContent=keyword||status?\`\${visible} 件 / 全 \${totalCount} 件\`:\`全 \${totalCount} 件\`;
+    </tr></thead>
+    <tbody id="msgTable">${rows}</tbody>
+  </table>
+</div>
+<script>
+var latestISO = '${latestISO}';
+
+function filterRows() {
+  var kw = document.getElementById('searchInput').value.toLowerCase();
+  var status = document.getElementById('statusFilter').value;
+  var rows = document.querySelectorAll('tr.msg-row');
+  var count = 0;
+  rows.forEach(function(row) {
+    var search = (row.dataset.search || '').toLowerCase();
+    var docId = row.dataset.docid;
+    var replyRow = document.getElementById('reply-' + docId);
+    var statusCell = row.querySelector('td:nth-child(8)');
+    var rowStatus = statusCell ? statusCell.textContent.trim() : '';
+    var show = (!kw || search.includes(kw)) && (!status || rowStatus === status);
+    row.style.display = show ? '' : 'none';
+    if (replyRow) replyRow.style.display = 'none';
+    if (show) count++;
+  });
+  document.getElementById('searchCount').textContent = '全 ' + count + ' 件';
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('statusFilter').value = '';
+  filterRows();
+}
+
+function openReply(docId) {
+  var row = document.getElementById('reply-' + docId);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
+function closeReply(docId) {
+  var row = document.getElementById('reply-' + docId);
+  if (row) row.style.display = 'none';
+}
+
+async function translateAdminReply(docId) {
+  var text = document.getElementById('text-' + docId).value.trim();
+  if (!text) { alert('翻訳するテキストを入力してください'); return; }
+  var transEl = document.getElementById('translated-' + docId);
+  transEl.value = '翻訳中...';
+  try {
+    var res = await fetch('/admin/translate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text: text, targetLang: 'EN' })
+    });
+    var data = await res.json();
+    transEl.value = data.success ? data.text : '翻訳失敗';
+  } catch(e) {
+    transEl.value = 'エラー: ' + e.message;
+  }
+}
+
+async function sendReply(docId, senderId) {
+  var langEl = document.querySelector('input[name="lang-' + docId + '"]:checked');
+  var lang = langEl ? langEl.value : 'ja';
+  var jaText = document.getElementById('text-' + docId).value.trim();
+  var enText = document.getElementById('translated-' + docId).value.trim();
+  var fileInput = document.getElementById('file-' + docId);
+  var result = document.getElementById('result-' + docId);
+  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
+  if (!sendText && (!fileInput.files || fileInput.files.length === 0)) {
+    result.textContent = '△ メッセージまたはファイルを入力してください';
+    result.style.color = 'orange'; return;
+  }
+  result.textContent = '送信中...'; result.style.color = 'gray';
+  try {
+    var formData = new FormData();
+    formData.append('docId', docId);
+    formData.append('senderId', senderId);
+    formData.append('message', sendText);
+    if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
+    var res = await fetch('/admin/reply', { method: 'POST', body: formData });
+    var data = await res.json();
+    if (data.success) {
+      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
+      setTimeout(function(){ location.reload(); }, 1500);
+    } else {
+      result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red';
     }
-    function clearSearch(){document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='';filterRows();}
-    function openReply(id){const r=document.getElementById('reply-'+id);r.style.display=r.style.display==='none'?'table-row':'none';}
-    function closeReply(id){document.getElementById('reply-'+id).style.display='none';}
-    async function sendReply(docId,senderId){
-      const text=document.getElementById('text-'+docId).value;
-      const fileInput=document.getElementById('file-'+docId);
-      const result=document.getElementById('result-'+docId);
-      if(!text.trim()&&(!fileInput.files||fileInput.files.length===0)){result.textContent='⚠️ メッセージまたはファイルを入力してください';result.style.color='orange';return;}
-      result.textContent='送信中...';result.style.color='gray';
-      try{
-        const formData=new FormData();
-        formData.append('docId',docId);formData.append('senderId',senderId);formData.append('message',text);
-        if(fileInput.files&&fileInput.files.length>0)formData.append('file',fileInput.files[0]);
-        const res=await fetch('/admin/reply',{method:'POST',body:formData});
-        const data=await res.json();
-        if(data.success){result.textContent='✅ 送信完了！';result.style.color='green';setTimeout(()=>location.reload(),1500);}
-        else{result.textContent='❌ 送信失敗: '+data.error;result.style.color='red';}
-      }catch(e){result.textContent='❌ エラー: '+e.message;result.style.color='red';}
+  } catch(e) {
+    result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red';
+  }
+}
+
+// 新着メッセージ自動チェック
+async function checkNewMessages() {
+  try {
+    var res = await fetch('/admin/messages/new?after=' + encodeURIComponent(latestISO));
+    var data = await res.json();
+    if (data.messages && data.messages.length > 0) {
+      latestISO = data.messages[0].createdAtISO;
+      location.reload();
     }
-    async function checkNewMessages(){
-      if(isRefreshing)return;
-      isRefreshing=true;
-      try{
-        const res=await fetch('/admin/messages/new?after='+encodeURIComponent(lastISO));
-        const data=await res.json();
-        if(data.messages&&data.messages.length>0){
-          const tbody=document.getElementById('msgTable');
-          data.messages.forEach(msg=>{
-            if(document.querySelector('[data-docid="'+msg.docId+'"]'))return;
-            totalCount++;
-            const statusColor=msg.status==='未対応'?'#e74c3c':'#27ae60';
-            const avatar=msg.senderPicture
-              ?'<img src="'+msg.senderPicture+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:2px solid #ddd;">'
-              :'<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:#3498db;color:white;font-size:14px;font-weight:bold;vertical-align:middle;margin-right:8px;">'+(msg.senderName||'?').charAt(0).toUpperCase()+'</span>';
-            const newRow=document.createElement('tr');
-            newRow.className='msg-row new-message';
-            newRow.setAttribute('data-search',[msg.senderName||'',msg.message||'',msg.workplace||'',msg.residenceStatus||''].join(' ').toLowerCase());
-            newRow.setAttribute('data-docid',msg.docId);
-            newRow.innerHTML=\`<td>\${msg.date}</td>
-              <td><a href="/admin/contacts/\${msg.senderId}" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">\${avatar}\${msg.senderName||'不明'}</a></td>
-              <td>\${msg.workplace||'―'}</td><td>\${msg.residenceStatus||'―'}</td>
-              <td>\${msg.message||''}</td><td>―</td><td>―</td>
-              <td style="color:\${statusColor};font-weight:bold;">\${msg.status}</td>
-              <td><button onclick="openReply('\${msg.docId}')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button></td>\`;
-            const replyRow=document.createElement('tr');
-            replyRow.id='reply-'+msg.docId;
-            replyRow.style.cssText='display:none;background:#f0f7ff;';
-            replyRow.innerHTML=\`<td colspan="9" style="padding:12px;">
-              <textarea id="text-\${msg.docId}" rows="3" style="width:80%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;" placeholder="返信メッセージを入力（任意）..."></textarea>
-              <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
-                <label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>
-                <input type="file" id="file-\${msg.docId}" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;">
-              </div>
-              <small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>
-              <div style="margin-top:10px;">
-                <button onclick="sendReply('\${msg.docId}','\${msg.senderId}')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>
-                <button onclick="closeReply('\${msg.docId}')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>
-                <span id="result-\${msg.docId}" style="margin-left:12px;font-weight:bold;"></span>
-              </div></td>\`;
-            tbody.insertBefore(replyRow,tbody.firstChild);
-            tbody.insertBefore(newRow,tbody.firstChild);
-            if(msg.createdAtISO>lastISO)lastISO=msg.createdAtISO;
-          });
-          document.getElementById('searchCount').textContent='全 '+totalCount+' 件';
-          document.title='🔔 新着 '+data.messages.length+'件 | 問い合わせ管理画面';
-          setTimeout(()=>{document.title='📋 問い合わせ管理画面';},5000);
-        }
-      }catch(e){console.error('自動更新エラー:',e);}
-      isRefreshing=false;
-    }
-    setInterval(checkNewMessages,60000);
-    const indicator=document.createElement('div');
-    indicator.style.cssText='position:fixed;bottom:16px;right:16px;background:rgba(44,62,80,0.85);color:white;padding:8px 16px;border-radius:20px;font-size:12px;z-index:999;';
-    indicator.textContent='🔄 次回更新: 60秒後';
-    document.body.appendChild(indicator);
-    setInterval(()=>{countdown--;if(countdown<=0)countdown=60;indicator.textContent='🔄 次回更新: '+countdown+'秒後';},1000);
-  </script></body></html>`);
+  } catch(e) {}
+}
+setInterval(checkNewMessages, 60000);
+</script>
+</body></html>`);
 });
 
 // 返信API
 router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const docId = req.body.docId;
-  const senderId = req.body.senderId;
-  const message = req.body.message;
-  const adminId = req.session.adminId;
-  const adminDisplayName = req.session.adminDisplayName;
-  const adminSignature = req.session.adminSignature;
+  const { docId, senderId, message } = req.body;
   try {
-    if (message && message.trim()) {
-      let fullMessage = message;
-      if (adminSignature) fullMessage = message + '\n\n' + adminSignature;
-      await sendMessage(senderId, fullMessage);
-      await db.collection('messages').doc(docId).update({
-        status: '対応済み', repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-        replyMessage: fullMessage, replyAdmin: adminDisplayName || adminId
-      });
-    }
+    const docRef = db.collection('messages').doc(docId);
+    const doc = await docRef.get();
+    if (!doc.exists) return res.json({ success: false, error: 'メッセージが見つかりません' });
+
+    let attachmentName = null;
+    let attachmentType = null;
+    let attachmentUrl = null;
+
     if (req.file) {
-      const attachmentType = getAttachmentType(req.file.mimetype);
-      const formData1 = new FormData();
-      formData1.append('recipient', JSON.stringify({ id: senderId }));
-      formData1.append('message', JSON.stringify({ attachment: { type: attachmentType, payload: { is_reusable: false } } }));
-      formData1.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
-      const axiosRes = await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, formData1, { headers: formData1.getHeaders() });
-      if (axiosRes.data.message_id) {
-        let attachmentUrl = null;
-        if (attachmentType === 'image') {
-          try {
-            const urlRes = await fetch(`https://graph.facebook.com/v19.0/${axiosRes.data.message_id}/attachments?access_token=${PAGE_ACCESS_TOKEN}`);
-            const urlData = await urlRes.json();
-            if (urlData.data && urlData.data[0] && urlData.data[0].image_data) attachmentUrl = urlData.data[0].image_data.url;
-          } catch (e) {}
-        }
-        const updateData = { status: '対応済み', repliedAt: admin.firestore.FieldValue.serverTimestamp(), replyAdmin: adminDisplayName || adminId, attachmentName: req.file.originalname, attachmentType };
-        if (attachmentUrl) updateData.attachmentUrl = attachmentUrl;
-        if (!message || !message.trim()) updateData.replyMessage = `[添付ファイル: ${req.file.originalname}]`;
-        await db.collection('messages').doc(docId).update(updateData);
-      } else {
-        return res.json({ success: false, error: 'ファイル送信失敗: ' + JSON.stringify(axiosRes.data) });
-      }
+      const fileType = getAttachmentType(req.file.mimetype);
+      attachmentName = req.file.originalname;
+      attachmentType = fileType;
+      const url = `https://graph.facebook.com/v19.0/me/message_attachments?access_token=${PAGE_ACCESS_TOKEN}`;
+      const form = new FormData();
+      form.append('message', JSON.stringify({ attachment: { type: fileType, payload: { is_reusable: true } } }));
+      form.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
+      const uploadRes = await axios.post(url, form, { headers: form.getHeaders() });
+      const attachmentId = uploadRes.data.attachment_id;
+      const msgUrl = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+      const msgRes = await axios.post(msgUrl, {
+        recipient: { id: senderId },
+        message: { attachment: { type: fileType, payload: { attachment_id: attachmentId } } }
+      });
+      attachmentUrl = msgRes.data.attachment_url || null;
     }
+
+    if (message && message.trim()) {
+      await sendMessage(senderId, message);
+    }
+
+    const contactDoc = await db.collection('contacts').doc(senderId).get();
+    const profile = contactDoc.exists ? contactDoc.data() : {};
+    const replyMsg = message || '';
+    const replyText = replyMsg + '\n担当：' + (req.session.adminDisplayName || '管理者') + '\ntel\nmail\nfacebook';
+
+    await docRef.update({
+      status: '対応済み',
+      replyMessage: replyText,
+      replyAdmin: req.session.adminDisplayName || '管理者',
+      repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+      attachmentName, attachmentType, attachmentUrl
+    });
+
     res.json({ success: true });
   } catch (err) {
-    const errMsg = err.response ? JSON.stringify(err.response.data) : err.message;
-    res.json({ success: false, error: errMsg });
+    console.error('返信エラー:', err.message);
+    res.json({ success: false, error: err.message });
   }
 });
 
