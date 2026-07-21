@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { getSenderInfo } = require('../helpers/facebook');
 const VERIFY_TOKEN = 'union_support_verify_2024';
 
 // Webhook認証
@@ -24,22 +23,29 @@ router.post('/webhook', async (req, res) => {
         const senderId = event.sender.id;
         const messageText = event.message.text || '（テキストなし）';
         console.log('Webhook受信:', senderId, messageText);
-        let senderInfo = { name: '不明', picture: null };
+
+        // contactsコレクションから既存の名前を取得
+        let senderName = '不明';
+        let senderPicture = null;
         try {
-          senderInfo = await getSenderInfo(senderId);
+          const contactDoc = await db.collection('contacts').doc(senderId).get();
+          if (contactDoc.exists && contactDoc.data().passportName) {
+            senderName = contactDoc.data().passportName;
+          }
         } catch (err) {
-          console.error('プロフィール取得エラー:', err.message);
+          console.error('contacts取得エラー:', err.message);
         }
+
         try {
           await db.collection('messages').add({
             senderId,
-            senderName: senderInfo.name,
-            senderPicture: senderInfo.picture,
+            senderName,
+            senderPicture,
             message: messageText,
             status: '未対応',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
-          console.log('Firestore保存成功');
+          console.log('Firestore保存成功:', senderName);
         } catch (err) {
           console.error('Firestore保存エラー:', err.message);
         }
