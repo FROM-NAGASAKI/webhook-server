@@ -30,6 +30,7 @@ const contactRoutes = require('./routes/contacts');
 const userRoutes = require('./routes/users');
 const memberRoutes = require('./routes/members');
 const broadcastRoutes = require('./routes/broadcast');
+const translateRoutes = require('./routes/translate');
 
 app.use('/', authRoutes);
 app.use('/', webhookRoutes);
@@ -38,6 +39,7 @@ app.use('/admin/contacts', contactRoutes);
 app.use('/admin/users', userRoutes);
 app.use('/admin/members', memberRoutes);
 app.use('/admin/broadcast', broadcastRoutes);
+app.use('/admin/translate', translateRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('サーバー起動中 ポート:', PORT));
