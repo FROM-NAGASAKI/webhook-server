@@ -33,6 +33,7 @@ function navHtml(adminName) {
     <a href="/admin">📋 問い合わせ</a>
     <a href="/admin/contacts">👥 ユーザー履歴</a>
     <a href="/admin/members">📊 メンバー一覧</a>
+    <a href="/admin/broadcast">📢 グループ送信</a>
     <a href="/admin/users">👤 管理者</a>
     <span style="margin-left:16px;font-size:13px;opacity:0.8;">${adminName || ''}</span>
     <a href="/logout" style="margin-left:8px;background:rgba(231,76,60,0.7);">🚪 ログアウト</a>
