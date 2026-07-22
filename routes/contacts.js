@@ -67,6 +67,9 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const msgId = doc.id;
 
+    // 管理者送信メッセージはスキップ（replyMessageとして別途表示）
+    if (d.isAdminSent) return '';
+
     let html = '<div style="display:flex;justify-content:flex-start;margin-bottom:8px;gap:8px;">'
       + avatarHtml(senderName, senderPicture)
       + '<div style="max-width:60%;">'
@@ -174,7 +177,7 @@ async function sendReply(docId, senderId) {
   var enText = document.getElementById('translated-'+docId).value.trim();
   var fileInput = document.getElementById('file-'+docId);
   var result = document.getElementById('result-'+docId);
-  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'+String.fromCharCode(10,10)+'+enText:'');
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?String.fromCharCode(10,10)+enText:'');
   if (!sendText && (!fileInput.files||fileInput.files.length===0)) {
     result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
@@ -229,7 +232,7 @@ async function sendNewMessage() {
   var enText = document.getElementById('newMsgEn').value.trim();
   var fileInput = document.getElementById('newMsgFile');
   var result = document.getElementById('newMsgResult');
-  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'+String.fromCharCode(10,10)+'+enText:'');
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?String.fromCharCode(10,10)+enText:'');
   if (!sendText && (!fileInput||!fileInput.files||fileInput.files.length===0)) {
     result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
@@ -386,16 +389,17 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
     const profile = contactDoc.exists ? contactDoc.data() : {};
     const senderName = profile.passportName || '不明';
 
-    // messagesコレクションに記録
+    // 管理者からの送信を記録（受信メッセージとして残さず、対応済みとして記録）
     await db.collection('messages').add({
       senderId,
       senderName,
       senderPicture: null,
-      message: '[送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
+      message: '[管理者送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
       replyMessage: sendText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: '対応済み',
+      isAdminSent: true,
       attachmentName,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
