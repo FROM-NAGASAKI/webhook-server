@@ -93,35 +93,6 @@ router.get('/:senderId', requireAuth, async (req, res) => {
         + '</div></div></div>';
     }
 
-    if (status === '未対応') {
-      html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;">'
-        + '<div style="max-width:75%;background:#f0f7ff;border-radius:8px;padding:12px;border:1px dashed #2980b9;">'
-        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
-        + '<div>'
-        + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
-        + '<textarea id="text-' + msgId + '" rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box;resize:vertical;" placeholder="返信メッセージを入力..."></textarea>'
-        + '<button onclick="translateReply(\'' + msgId + '\')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
-        + '</div>'
-        + '<div>'
-        + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🌐 英語訳（自動）</label>'
-        + '<textarea id="translated-' + msgId + '" rows="4" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:13px;box-sizing:border-box;resize:vertical;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
-        + '<div style="margin-top:4px;font-size:11px;color:#888;">※ 編集して送信も可能です</div>'
-        + '</div></div>'
-        + '<div style="margin-bottom:8px;">'
-        + '<label style="font-size:12px;color:#555;font-weight:bold;">送信言語：</label>'
-        + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-' + msgId + '" value="ja" checked> 日本語</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + msgId + '" value="en"> 英語訳</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + msgId + '" value="both"> 両方送信</label>'
-        + '</div>'
-        + '<div style="margin-bottom:8px;">'
-        + '<label style="font-size:12px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
-        + '<input type="file" id="file-' + msgId + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:12px;margin-left:8px;">'
-        + '<small style="color:#888;display:block;margin-top:2px;font-size:11px;">画像・PDF・Word・Excel（最大25MB）</small>'
-        + '</div>'
-        + '<button onclick="sendReply(\'' + msgId + '\',\'' + senderId + '\')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;font-size:14px;">送信</button>'
-        + '<span id="result-' + msgId + '" style="font-weight:bold;font-size:13px;"></span>'
-        + '</div></div>';
-    }
     html += '</div>';
     return html;
   }).join('');

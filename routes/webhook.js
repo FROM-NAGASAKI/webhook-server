@@ -21,8 +21,10 @@ router.post('/webhook', async (req, res) => {
       const event = entry.messaging[0];
       if (event && event.message && !event.message.is_echo) {
         const senderId = event.sender.id;
-        const messageText = event.message.text || '（テキストなし）';
-        console.log('Webhook受信:', senderId, messageText);
+        const messageText = event.message.text || '';
+        const attachments = event.message.attachments || [];
+
+        console.log('Webhook受信:', senderId, messageText, '添付:', attachments.length);
 
         // contactsコレクションから既存の名前を取得
         let senderName = '不明';
@@ -36,12 +38,31 @@ router.post('/webhook', async (req, res) => {
           console.error('contacts取得エラー:', err.message);
         }
 
+        // 添付ファイル情報を処理
+        let attachmentName = null;
+        let attachmentType = null;
+        let attachmentUrl = null;
+        if (attachments.length > 0) {
+          const att = attachments[0];
+          attachmentType = att.type || 'file';
+          attachmentUrl = att.payload ? att.payload.url : null;
+          attachmentName = att.type === 'image' ? '画像' :
+                           att.type === 'video' ? '動画' :
+                           att.type === 'audio' ? '音声' :
+                           att.type === 'file' ? 'ファイル' : '添付ファイル';
+        }
+
+        const displayMessage = messageText || (attachmentName ? '[' + attachmentName + ']' : '（テキストなし）');
+
         try {
           await db.collection('messages').add({
             senderId,
             senderName,
             senderPicture,
-            message: messageText,
+            message: displayMessage,
+            attachmentName,
+            attachmentType,
+            attachmentUrl,
             status: '未対応',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
