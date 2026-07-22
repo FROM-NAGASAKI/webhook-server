@@ -45,13 +45,13 @@ const profileRoutes = require('./routes/profile');
 
 app.use('/', authRoutes);
 app.use('/', webhookRoutes);
-app.use('/admin', adminRoutes);
+app.use('/admin/translate', translateRoutes);
 app.use('/admin/contacts', contactRoutes);
 app.use('/admin/users', userRoutes);
 app.use('/admin/members', memberRoutes);
 app.use('/admin/broadcast', broadcastRoutes);
-app.use('/admin/translate', translateRoutes);
 app.use('/admin/profile', profileRoutes);
+app.use('/admin', adminRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('サーバー起動中 ポート:', PORT));
