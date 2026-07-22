@@ -147,67 +147,52 @@ async function translateMsg(docId) {
   if (!text) return;
   statusEl.textContent = '翻訳中...';
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'JA' })
-    });
+    var res = await fetch('/admin/translate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,targetLang:'JA'})});
     var data = await res.json();
-    if (data.success) {
-      resultEl.style.display = 'block';
-      resultEl.textContent = '🇯🇵 ' + data.text;
-      statusEl.textContent = '';
-    } else { statusEl.textContent = '翻訳失敗'; }
-  } catch(e) { statusEl.textContent = 'エラー'; }
+    if (data.success) { resultEl.style.display='block'; resultEl.textContent='🇯🇵 '+data.text; statusEl.textContent=''; }
+    else { statusEl.textContent='翻訳失敗'; }
+  } catch(e) { statusEl.textContent='エラー'; }
 }
 
 async function translateReply(docId) {
-  var text = document.getElementById('text-' + docId).value.trim();
+  var text = document.getElementById('text-'+docId).value.trim();
   if (!text) { alert('翻訳するテキストを入力してください'); return; }
-  var transEl = document.getElementById('translated-' + docId);
+  var transEl = document.getElementById('translated-'+docId);
   transEl.value = '翻訳中...';
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'EN' })
-    });
+    var res = await fetch('/admin/translate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,targetLang:'EN'})});
     var data = await res.json();
     transEl.value = data.success ? data.text : '翻訳失敗';
-  } catch(e) { transEl.value = 'エラー: ' + e.message; }
+  } catch(e) { transEl.value = 'エラー: '+e.message; }
 }
 
 async function sendReply(docId, senderId) {
-  var langEl = document.querySelector('input[name=lang-' + docId + ']:checked');
-  var lang = langEl ? langEl.value : 'ja';
-  var jaText = document.getElementById('text-' + docId).value.trim();
-  var enText = document.getElementById('translated-' + docId).value.trim();
-  var fileInput = document.getElementById('file-' + docId);
-  var result = document.getElementById('result-' + docId);
-  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
-  if (!sendText && (!fileInput.files || fileInput.files.length === 0)) {
-    result.textContent = '△ メッセージまたはファイルを入力してください';
-    result.style.color = 'orange'; return;
+  var radios = document.getElementsByName('lang-'+docId);
+  var lang = 'ja';
+  for(var i=0;i<radios.length;i++){if(radios[i].checked){lang=radios[i].value;break;}}
+  var jaText = document.getElementById('text-'+docId).value.trim();
+  var enText = document.getElementById('translated-'+docId).value.trim();
+  var fileInput = document.getElementById('file-'+docId);
+  var result = document.getElementById('result-'+docId);
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'\n\n'+enText:'');
+  if (!sendText && (!fileInput.files||fileInput.files.length===0)) {
+    result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
-  result.textContent = '送信中...'; result.style.color = 'gray';
+  result.textContent='送信中...'; result.style.color='gray';
   try {
-    var formData = new FormData();
-    formData.append('docId', docId);
-    formData.append('senderId', senderId);
-    formData.append('message', sendText);
-    if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/reply', { method: 'POST', body: formData });
+    var fd = new FormData();
+    fd.append('docId',docId); fd.append('senderId',senderId); fd.append('message',sendText);
+    if (fileInput.files&&fileInput.files.length>0) fd.append('file',fileInput.files[0]);
+    var res = await fetch('/admin/reply',{method:'POST',body:fd});
     var data = await res.json();
-    if (data.success) {
-      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
-      setTimeout(function(){ location.reload(); }, 1500);
-    } else { result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red'; }
-  } catch(e) { result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red'; }
+    if (data.success) { result.textContent='✅ 送信完了！'; result.style.color='green'; setTimeout(function(){location.reload();},1500); }
+    else { result.textContent='✗ 送信失敗: '+data.error; result.style.color='red'; }
+  } catch(e) { result.textContent='✗ エラー: '+e.message; result.style.color='red'; }
 }
 
 async function saveProfile() {
   var msg = document.getElementById('profileMsg');
-  msg.textContent = '保存中...'; msg.style.color = 'gray';
+  msg.textContent='保存中...'; msg.style.color='gray';
   var data = {
     passportName: document.getElementById('passportName').value.trim(),
     workplace: document.getElementById('workplace').value.trim(),
@@ -217,17 +202,11 @@ async function saveProfile() {
     notes: document.getElementById('notes').value.trim()
   };
   try {
-    var res = await fetch('/admin/contacts/${senderId}/profile', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data)
-    });
+    var res = await fetch('/admin/contacts/${senderId}/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     var result = await res.json();
-    if (result.success) {
-      msg.textContent = '✅ 保存しました'; msg.style.color = 'green';
-      setTimeout(function(){ location.reload(); }, 1000);
-    } else { msg.textContent = '✗ 保存失敗: ' + result.error; msg.style.color = 'red'; }
-  } catch(e) { msg.textContent = '✗ エラー: ' + e.message; msg.style.color = 'red'; }
+    if (result.success) { msg.textContent='✅ 保存しました'; msg.style.color='green'; setTimeout(function(){location.reload();},1000); }
+    else { msg.textContent='✗ 保存失敗: '+result.error; msg.style.color='red'; }
+  } catch(e) { msg.textContent='✗ エラー: '+e.message; msg.style.color='red'; }
 }
 
 async function translateNewMsg() {
@@ -236,43 +215,39 @@ async function translateNewMsg() {
   var transEl = document.getElementById('newMsgEn');
   transEl.value = '翻訳中...';
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'EN' })
-    });
+    var res = await fetch('/admin/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text,targetLang:'EN'})});
     var data = await res.json();
     transEl.value = data.success ? data.text : '翻訳失敗';
-  } catch(e) { transEl.value = 'エラー: ' + e.message; }
+  } catch(e) { transEl.value = 'エラー: '+e.message; }
 }
 
 async function sendNewMessage() {
-  var langEl = document.querySelector('input[name=newMsgLang]:checked');
-  var lang = langEl ? langEl.value : 'ja';
+  var radios = document.getElementsByName('newMsgLang');
+  var lang = 'ja';
+  for(var i=0;i<radios.length;i++){if(radios[i].checked){lang=radios[i].value;break;}}
   var jaText = document.getElementById('newMsgJa').value.trim();
   var enText = document.getElementById('newMsgEn').value.trim();
   var fileInput = document.getElementById('newMsgFile');
   var result = document.getElementById('newMsgResult');
-  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
-  if (!sendText && (!fileInput || !fileInput.files || fileInput.files.length === 0)) {
-    result.textContent = '△ メッセージまたはファイルを入力してください';
-    result.style.color = 'orange'; return;
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'\n\n'+enText:'');
+  if (!sendText && (!fileInput||!fileInput.files||fileInput.files.length===0)) {
+    result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
-  result.textContent = '送信中...'; result.style.color = 'gray';
+  result.textContent='送信中...'; result.style.color='gray';
   try {
-    var formData = new FormData();
-    formData.append('message', sendText);
-    if (fileInput && fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/contacts/${senderId}/send', { method: 'POST', body: formData });
+    var fd = new FormData();
+    fd.append('message',sendText);
+    if (fileInput&&fileInput.files&&fileInput.files.length>0) fd.append('file',fileInput.files[0]);
+    var res = await fetch('/admin/contacts/${senderId}/send',{method:'POST',body:fd});
     var data = await res.json();
     if (data.success) {
-      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
-      document.getElementById('newMsgJa').value = '';
-      document.getElementById('newMsgEn').value = '';
-      if (fileInput) fileInput.value = '';
-      setTimeout(function(){ location.reload(); }, 1500);
-    } else { result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red'; }
-  } catch(e) { result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red'; }
+      result.textContent='✅ 送信完了！'; result.style.color='green';
+      document.getElementById('newMsgJa').value='';
+      document.getElementById('newMsgEn').value='';
+      if(fileInput) fileInput.value='';
+      setTimeout(function(){location.reload();},1500);
+    } else { result.textContent='✗ 送信失敗: '+data.error; result.style.color='red'; }
+  } catch(e) { result.textContent='✗ エラー: '+e.message; result.style.color='red'; }
 }
 
 window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
