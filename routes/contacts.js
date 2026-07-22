@@ -174,7 +174,7 @@ async function sendReply(docId, senderId) {
   var enText = document.getElementById('translated-'+docId).value.trim();
   var fileInput = document.getElementById('file-'+docId);
   var result = document.getElementById('result-'+docId);
-  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'\n\n'+enText:'');
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'+String.fromCharCode(10,10)+'+enText:'');
   if (!sendText && (!fileInput.files||fileInput.files.length===0)) {
     result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
@@ -229,7 +229,7 @@ async function sendNewMessage() {
   var enText = document.getElementById('newMsgEn').value.trim();
   var fileInput = document.getElementById('newMsgFile');
   var result = document.getElementById('newMsgResult');
-  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'\n\n'+enText:'');
+  var sendText = lang==='ja' ? jaText : lang==='en' ? enText : jaText+(enText?'+String.fromCharCode(10,10)+'+enText:'');
   if (!sendText && (!fileInput||!fileInput.files||fileInput.files.length===0)) {
     result.textContent='△ メッセージまたはファイルを入力してください'; result.style.color='orange'; return;
   }
