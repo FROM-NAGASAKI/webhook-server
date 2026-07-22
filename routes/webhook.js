@@ -38,21 +38,24 @@ router.post('/webhook', async (req, res) => {
           console.error('contacts取得エラー:', err.message);
         }
 
-        // 添付ファイル情報を処理
-        let attachmentName = null;
-        let attachmentType = null;
-        let attachmentUrl = null;
-        if (attachments.length > 0) {
-          const att = attachments[0];
-          attachmentType = att.type || 'file';
-          attachmentUrl = att.payload ? att.payload.url : null;
-          attachmentName = att.type === 'image' ? '画像' :
-                           att.type === 'video' ? '動画' :
-                           att.type === 'audio' ? '音声' :
-                           att.type === 'file' ? 'ファイル' : '添付ファイル';
-        }
+        // 複数添付ファイル対応
+        const attachmentList = attachments.map(att => ({
+          type: att.type || 'file',
+          url: att.payload ? att.payload.url : null,
+          name: att.type === 'image' ? '画像' :
+                att.type === 'video' ? '動画' :
+                att.type === 'audio' ? '音声' :
+                att.type === 'file' ? (att.payload && att.payload.name) || 'ファイル' : '添付ファイル'
+        }));
 
-        const displayMessage = messageText || (attachmentName ? '[' + attachmentName + ']' : '（テキストなし）');
+        // 後方互換のため単一添付も保持
+        const firstAtt = attachmentList[0] || null;
+        const attachmentName = firstAtt ? firstAtt.name : null;
+        const attachmentType = firstAtt ? firstAtt.type : null;
+        const attachmentUrl = firstAtt ? firstAtt.url : null;
+
+        const attLabel = attachmentList.map(a => '[' + a.name + ']').join(' ');
+        const displayMessage = messageText || attLabel || '（テキストなし）';
 
         try {
           await db.collection('messages').add({
@@ -63,6 +66,7 @@ router.post('/webhook', async (req, res) => {
             attachmentName,
             attachmentType,
             attachmentUrl,
+            attachments: attachmentList,
             status: '未対応',
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
