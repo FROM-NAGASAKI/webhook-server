@@ -140,156 +140,158 @@ router.get('/:senderId', requireAuth, async (req, res) => {
   const script = `
 <script>
 async function translateMsg(docId) {
-  var msgEl = document.getElementById('msg-' + docId);
-  var statusEl = document.getElementById('trans-status-' + docId);
-  var resultEl = document.getElementById('trans-result-' + docId);
-  var text = msgEl ? msgEl.textContent.trim() : '';
+  var msgEl = document.getElementById("msg-" + docId);
+  var statusEl = document.getElementById("trans-status-" + docId);
+  var resultEl = document.getElementById("trans-result-" + docId);
+  var text = msgEl ? msgEl.textContent.trim() : "";
   if (!text) return;
-  statusEl.textContent = '翻訳中...';
+  statusEl.textContent = "翻訳中...";
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'JA' })
+    var res = await fetch("/admin/translate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ text: text, targetLang: "JA" })
     });
     var data = await res.json();
     if (data.success) {
-      resultEl.style.display = 'block';
-      resultEl.textContent = '🇯🇵 ' + data.text;
-      statusEl.textContent = '';
+      resultEl.style.display = "block";
+      resultEl.textContent = "🇯🇵 " + data.text;
+      statusEl.textContent = "";
     } else {
-      statusEl.textContent = '翻訳失敗';
+      statusEl.textContent = "翻訳失敗";
     }
   } catch(e) {
-    statusEl.textContent = 'エラー';
+    statusEl.textContent = "エラー";
   }
 }
 
 async function translateReply(docId) {
-  var text = document.getElementById('text-' + docId).value.trim();
-  if (!text) { alert('翻訳するテキストを入力してください'); return; }
-  var transEl = document.getElementById('translated-' + docId);
-  transEl.value = '翻訳中...';
+  var text = document.getElementById("text-" + docId).value.trim();
+  if (!text) { alert("翻訳するテキストを入力してください"); return; }
+  var transEl = document.getElementById("translated-" + docId);
+  transEl.value = "翻訳中...";
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'EN' })
+    var res = await fetch("/admin/translate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ text: text, targetLang: "EN" })
     });
     var data = await res.json();
-    transEl.value = data.success ? data.text : '翻訳失敗';
+    transEl.value = data.success ? data.text : "翻訳失敗";
   } catch(e) {
-    transEl.value = 'エラー: ' + e.message;
+    transEl.value = "エラー: " + e.message;
   }
 }
 
 async function sendReply(docId, senderId) {
-  var langEl = document.querySelector('input[name="lang-' + docId + '"]:checked');
-  var lang = langEl ? langEl.value : 'ja';
-  var jaText = document.getElementById('text-' + docId).value.trim();
-  var enText = document.getElementById('translated-' + docId).value.trim();
-  var fileInput = document.getElementById('file-' + docId);
-  var result = document.getElementById('result-' + docId);
-  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
+  var langEl = document.querySelector("input[name=\"lang-" + docId + "\"]:checked");
+  var lang = langEl ? langEl.value : "ja";
+  var jaText = document.getElementById("text-" + docId).value.trim();
+  var enText = document.getElementById("translated-" + docId).value.trim();
+  var fileInput = document.getElementById("file-" + docId);
+  var result = document.getElementById("result-" + docId);
+  var sendText = lang === "ja" ? jaText : lang === "en" ? enText : jaText + (enText ? "\n\n" + enText : "");
   if (!sendText && (!fileInput.files || fileInput.files.length === 0)) {
-    result.textContent = '△ メッセージまたはファイルを入力してください';
-    result.style.color = 'orange'; return;
+    result.textContent = "△ メッセージまたはファイルを入力してください";
+    result.style.color = "orange"; return;
   }
-  result.textContent = '送信中...'; result.style.color = 'gray';
+  result.textContent = "送信中..."; result.style.color = "gray";
   try {
     var formData = new FormData();
-    formData.append('docId', docId);
-    formData.append('senderId', senderId);
-    formData.append('message', sendText);
-    if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/reply', { method: 'POST', body: formData });
+    formData.append("docId", docId);
+    formData.append("senderId", senderId);
+    formData.append("message", sendText);
+    if (fileInput.files && fileInput.files.length > 0) formData.append("file", fileInput.files[0]);
+    var res = await fetch("/admin/reply", { method: "POST", body: formData });
     var data = await res.json();
     if (data.success) {
-      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
+      result.textContent = "✅ 送信完了！"; result.style.color = "green";
       setTimeout(function(){ location.reload(); }, 1500);
     } else {
-      result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red';
+      result.textContent = "✗ 送信失敗: " + data.error; result.style.color = "red";
     }
   } catch(e) {
-    result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red';
+    result.textContent = "✗ エラー: " + e.message; result.style.color = "red";
   }
 }
 
 async function saveProfile() {
-  var msg = document.getElementById('profileMsg');
-  msg.textContent = '保存中...'; msg.style.color = 'gray';
+  var msg = document.getElementById("profileMsg");
+  msg.textContent = "保存中..."; msg.style.color = "gray";
   var data = {
-    passportName: document.getElementById('passportName').value.trim(),
-    workplace: document.getElementById('workplace').value.trim(),
-    residenceStatus: document.getElementById('residenceStatus').value.trim(),
-    entryDate: document.getElementById('entryDate').value,
-    searchTags: document.getElementById('searchTags').value.trim(),
-    notes: document.getElementById('notes').value.trim()
+    passportName: document.getElementById("passportName").value.trim(),
+    workplace: document.getElementById("workplace").value.trim(),
+    residenceStatus: document.getElementById("residenceStatus").value.trim(),
+    entryDate: document.getElementById("entryDate").value,
+    searchTags: document.getElementById("searchTags").value.trim(),
+    notes: document.getElementById("notes").value.trim()
   };
   try {
-    var res = await fetch('/admin/contacts/${senderId}/profile', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+    var res = await fetch("/admin/contacts/${senderId}/profile", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
       body: JSON.stringify(data)
     });
     var result = await res.json();
     if (result.success) {
-      msg.textContent = '✅ 保存しました'; msg.style.color = 'green';
+      msg.textContent = "✅ 保存しました"; msg.style.color = "green";
       setTimeout(function(){ location.reload(); }, 1000);
     } else {
-      msg.textContent = '✗ 保存失敗: ' + result.error; msg.style.color = 'red';
+      msg.textContent = "✗ 保存失敗: " + result.error; msg.style.color = "red";
     }
   } catch(e) {
-    msg.textContent = '✗ エラー: ' + e.message; msg.style.color = 'red';
+    msg.textContent = "✗ エラー: " + e.message; msg.style.color = "red";
   }
 }
+
 async function translateNewMsg() {
-  var text = document.getElementById('newMsgJa').value.trim();
-  if (!text) { alert('翻訳するテキストを入力してください'); return; }
-  var transEl = document.getElementById('newMsgEn');
-  transEl.value = '翻訳中...';
+  var text = document.getElementById("newMsgJa").value.trim();
+  if (!text) { alert("翻訳するテキストを入力してください"); return; }
+  var transEl = document.getElementById("newMsgEn");
+  transEl.value = "翻訳中...";
   try {
-    var res = await fetch('/admin/translate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: text, targetLang: 'EN' })
+    var res = await fetch("/admin/translate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ text: text, targetLang: "EN" })
     });
     var data = await res.json();
-    transEl.value = data.success ? data.text : '翻訳失敗';
+    transEl.value = data.success ? data.text : "翻訳失敗";
   } catch(e) {
-    transEl.value = 'エラー: ' + e.message;
+    transEl.value = "エラー: " + e.message;
   }
 }
 
 async function sendNewMessage() {
-  var langEl = document.querySelector('input[name="newMsgLang"]:checked');
-  var lang = langEl ? langEl.value : 'ja';
-  var jaText = document.getElementById('newMsgJa').value.trim();
-  var enText = document.getElementById('newMsgEn').value.trim();
-  var fileInput = document.getElementById('newMsgFile');
-  var result = document.getElementById('newMsgResult');
-  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
+  var langEl = document.querySelector("input[name=\"newMsgLang\"]:checked");
+  var lang = langEl ? langEl.value : "ja";
+  var jaText = document.getElementById("newMsgJa").value.trim();
+  var enText = document.getElementById("newMsgEn").value.trim();
+  var fileInput = document.getElementById("newMsgFile");
+  var result = document.getElementById("newMsgResult");
+  var sendText = lang === "ja" ? jaText : lang === "en" ? enText : jaText + (enText ? "\n\n" + enText : "");
   if (!sendText && (!fileInput || !fileInput.files || fileInput.files.length === 0)) {
-    result.textContent = '△ メッセージまたはファイルを入力してください';
-    result.style.color = 'orange'; return;
+    result.textContent = "△ メッセージまたはファイルを入力してください";
+    result.style.color = "orange"; return;
   }
-  result.textContent = '送信中...'; result.style.color = 'gray';
+  result.textContent = "送信中..."; result.style.color = "gray";
   try {
     var formData = new FormData();
-    formData.append('message', sendText);
-    if (fileInput && fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/contacts/${senderId}/send', { method: 'POST', body: formData });
+    formData.append("message", sendText);
+    if (fileInput && fileInput.files && fileInput.files.length > 0) formData.append("file", fileInput.files[0]);
+    var res = await fetch("/admin/contacts/${senderId}/send", { method: "POST", body: formData });
     var data = await res.json();
     if (data.success) {
-      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
-      document.getElementById('newMsgJa').value = '';
-      document.getElementById('newMsgEn').value = '';
-      if (fileInput) fileInput.value = '';
+      result.textContent = "✅ 送信完了！"; result.style.color = "green";
+      document.getElementById("newMsgJa").value = "";
+      document.getElementById("newMsgEn").value = "";
+      if (fileInput) fileInput.value = "";
       setTimeout(function(){ location.reload(); }, 1500);
     } else {
-      result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red';
+      result.textContent = "✗ 送信失敗: " + data.error; result.style.color = "red";
     }
   } catch(e) {
-    result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red';
+    result.textContent = "✗ エラー: " + e.message; result.style.color = "red";
   }
 }
 
