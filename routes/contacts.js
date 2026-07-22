@@ -67,14 +67,23 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
     const msgId = doc.id;
 
-    // 管理者送信メッセージはスキップ（replyMessageとして別途表示）
-    if (d.isAdminSent) return '';
+    // 管理者送信メッセージは右側（管理者側）に表示
+    if (d.isAdminSent) {
+      const replyText = d.replyMessage || '';
+      const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : date;
+      return '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><div style="max-width:60%;">'
+        + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
+        + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
+        + '<div style="white-space:pre-wrap;">' + replyText + '</div>'
+        + attachmentHtml(d)
+        + '</div></div></div>';
+    }
 
     let html = '<div style="display:flex;justify-content:flex-start;margin-bottom:8px;gap:8px;">'
       + avatarHtml(senderName, senderPicture)
       + '<div style="max-width:60%;">'
       + '<div style="font-size:12px;color:#888;margin-bottom:4px;">' + senderName + ' · ' + date + '</div>'
-      + '<div id="msg-' + msgId + '" style="background:white;border-radius:0 12px 12px 12px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">' + (d.message || '') + '</div>'
+      + '<div id="msg-' + msgId + '" style="background:white;border-radius:0 12px 12px 12px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">' + (d.message || '') + attachmentHtml(d) + '</div>'
       + '<div style="margin-top:4px;">'
       + '<button onclick="translateMsg(\'' + msgId + '\')" style="font-size:11px;padding:3px 8px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 日本語訳</button>'
       + '<span id="trans-status-' + msgId + '" style="font-size:12px;color:#555;margin-left:8px;"></span>'
