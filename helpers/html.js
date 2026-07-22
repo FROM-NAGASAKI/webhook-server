@@ -1,3 +1,13 @@
+function pwaHtml() {
+  return '<link rel="manifest" href="/manifest.json">'
+    + '<meta name="theme-color" content="#2c3e50">'
+    + '<meta name="apple-mobile-web-app-capable" content="yes">'
+    + '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
+    + '<meta name="apple-mobile-web-app-title" content="FROM管理">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">'
+    + '<link rel="apple-touch-icon" href="/icons/icon-192.png">'
+    + '<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js");}</script>';
+}
 function avatarHtml(name, pictureUrl, size) {
   size = size || 32;
   if (pictureUrl) {
@@ -45,4 +55,4 @@ function commonCss() {
 function faviconTag() {
   return '<link rel="icon" href="https://www.facebook.com/favicon.ico">';
 }
-module.exports = { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, faviconTag };
+module.exports = { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, faviconTag, pwaHtml };

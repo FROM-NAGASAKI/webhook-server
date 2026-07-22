@@ -1,6 +1,7 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const session = require('express-session');
+const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -12,11 +13,25 @@ app.use(session({
   cookie: { maxAge: 8 * 60 * 60 * 1000 }
 }));
 
+// 静的ファイル配信（PWA用）
+app.use('/icons', express.static(path.join(__dirname, 'public/icons')));
+
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 app.set('db', db);
 app.set('adminSdk', admin);
+
+// PWA用ルート
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.sendFile(path.join(__dirname, 'public/manifest.json'));
+});
+app.get('/service-worker.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public/service-worker.js'));
+});
 
 const authRoutes = require('./routes/auth');
 const webhookRoutes = require('./routes/webhook');
