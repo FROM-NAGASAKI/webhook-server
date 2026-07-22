@@ -5,9 +5,10 @@ const axios = require('axios');
 const FormData = require('form-data');
 const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
-const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = require('../helpers/html');
+const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const PAGE_SIZE = 50;
 
 // 新着メッセージAPI
 router.get('/messages/new', requireAuth, async (req, res) => {
@@ -45,17 +46,28 @@ router.get('/messages/new', requireAuth, async (req, res) => {
 // 問い合わせ一覧
 router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
-  const snapshot = await db.collection('messages').orderBy('createdAt', 'desc').limit(100).get();
-  const senderIds = [...new Set(snapshot.docs.map(d => d.data().senderId).filter(Boolean))];
+  const page = parseInt(req.query.page) || 1;
+  const offset = (page - 1) * PAGE_SIZE;
+
+  // 全件取得（ページネーション用）
+  const allSnapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
+  const totalCount = allSnapshot.size;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+  // 対象ページのドキュメント
+  const pageDocs = allSnapshot.docs.slice(offset, offset + PAGE_SIZE);
+
+  const senderIds = [...new Set(pageDocs.map(d => d.data().senderId).filter(Boolean))];
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
     const doc = await db.collection('contacts').doc(sid).get();
     if (doc.exists) profileMap[sid] = doc.data();
   }));
-  const latestISO = snapshot.size > 0 && snapshot.docs[0].data().createdAt
-    ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
 
-  const rows = snapshot.docs.map(doc => {
+  const latestISO = allSnapshot.size > 0 && allSnapshot.docs[0].data().createdAt
+    ? allSnapshot.docs[0].data().createdAt.toDate().toISOString() : '';
+
+  const rows = pageDocs.map(doc => {
     const d = doc.data();
     const profile = profileMap[d.senderId] || {};
     const displayName = profile.passportName || d.senderName || '不明';
@@ -116,6 +128,28 @@ router.get('/', requireAuth, async (req, res) => {
       + '<td>' + replyBtn + '</td>'
       + '</tr>' + replyForm;
   }).join('');
+
+  // ページネーションHTML
+  let paginationHtml = '<div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap;">';
+  if (page > 1) {
+    paginationHtml += '<a href="/admin?page=' + (page-1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">← 前へ</a>';
+  }
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === page) {
+      paginationHtml += '<span style="padding:8px 14px;background:#2c3e50;color:white;border-radius:4px;">' + i + '</span>';
+    } else if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
+      paginationHtml += '<a href="/admin?page=' + i + '" style="padding:8px 14px;background:white;color:#2980b9;border:1px solid #2980b9;border-radius:4px;text-decoration:none;">' + i + '</a>';
+    } else if (i === page - 3 || i === page + 3) {
+      paginationHtml += '<span style="padding:8px 4px;color:#888;">...</span>';
+    }
+  }
+  if (page < totalPages) {
+    paginationHtml += '<a href="/admin?page=' + (page+1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">次へ →</a>';
+  }
+  paginationHtml += '</div>';
+  paginationHtml += '<div style="text-align:center;margin-top:8px;font-size:13px;color:#888;">'
+    + '全 ' + totalCount + ' 件中 ' + (offset+1) + '〜' + Math.min(offset+PAGE_SIZE, totalCount) + ' 件表示'
+    + '（' + page + ' / ' + totalPages + ' ページ）</div>';
 
   const script = `
 <script>
@@ -221,10 +255,11 @@ setInterval(checkNewMessages, 60000);
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
+    + (typeof pwaHtml === 'function' ? pwaHtml() : '')
     + '<title>問い合わせ管理画面</title>'
     + '<style>' + commonCss()
-    + '.search-bar{display:flex;gap:8px;margin-bottom:16px;align-items:center;background:white;padding:12px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}'
-    + '.search-bar input{flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}'
+    + '.search-bar{display:flex;gap:8px;margin-bottom:16px;align-items:center;background:white;padding:12px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);flex-wrap:wrap;}'
+    + '.search-bar input{flex:1;min-width:200px;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}'
     + '.search-bar select{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}'
     + '.btn-clear{padding:8px 14px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;}'
     + '.search-count{font-size:14px;color:#555;}'
@@ -232,8 +267,6 @@ setInterval(checkNewMessages, 60000);
     + 'th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;font-size:13px;}'
     + 'td{padding:12px 16px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top;}'
     + 'tr.msg-row:hover td{background:#f8f9fa;}'
-    + '@keyframes highlight{0%{background:#fff3cd;}100%{background:white;}}'
-    + '.new-message td{animation:highlight 3s ease-out;}'
     + '</style></head><body>'
     + '<header><h1>📋 問い合わせ管理画面</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container" style="overflow-x:auto;">'
@@ -241,13 +274,14 @@ setInterval(checkNewMessages, 60000);
     + '<input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">'
     + '<select id="statusFilter" onchange="filterRows()"><option value="">すべてのステータス</option><option value="未対応">未対応</option><option value="対応済み">対応済み</option></select>'
     + '<button class="btn-clear" onclick="clearSearch()">× クリア</button>'
-    + '<span class="search-count" id="searchCount">全 ' + snapshot.size + ' 件</span>'
+    + '<span class="search-count" id="searchCount">' + pageDocs.length + ' 件</span>'
     + '</div>'
     + '<table><thead><tr>'
     + '<th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>'
     + '<th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>'
     + '</tr></thead>'
     + '<tbody id="msgTable">' + rows + '</tbody></table>'
+    + paginationHtml
     + '</div>'
     + script
     + '</body></html>');
@@ -289,7 +323,19 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       await sendMessage(senderId, message);
     }
 
-    const replyText = (message || '') + '\n担当：' + (req.session.adminDisplayName || '管理者') + '\ntel\nmail\nfacebook';
+    // 署名をセッションから取得（なければFirestoreから取得）
+    let signature = req.session.adminSignature || '';
+    if (!signature) {
+      try {
+        const adminSnapshot = await db.collection('admins').where('userId', '==', req.session.adminId).limit(1).get();
+        if (!adminSnapshot.empty) {
+          signature = adminSnapshot.docs[0].data().signature || '';
+          req.session.adminSignature = signature;
+        }
+      } catch (e) {}
+    }
+
+    const replyText = (message || '') + (signature ? '\n\n' + signature : '');
 
     await docRef.update({
       status: '対応済み',

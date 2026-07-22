@@ -117,6 +117,7 @@ router.post('/signature', requireAuth, async (req, res) => {
     const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
     if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
     await snapshot.docs[0].ref.update({ signature, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    req.session.adminSignature = signature;
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
