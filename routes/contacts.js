@@ -265,24 +265,28 @@ async function sendNewMessage() {
   var lang = langEl ? langEl.value : 'ja';
   var jaText = document.getElementById('newMsgJa').value.trim();
   var enText = document.getElementById('newMsgEn').value.trim();
+  var fileInput = document.getElementById('newMsgFile');
   var result = document.getElementById('newMsgResult');
   var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
-  if (!sendText) {
-    result.textContent = '△ メッセージを入力してください';
+  if (!sendText && (!fileInput || !fileInput.files || fileInput.files.length === 0)) {
+    result.textContent = '△ メッセージまたはファイルを入力してください';
     result.style.color = 'orange'; return;
   }
   result.textContent = '送信中...'; result.style.color = 'gray';
   try {
+    var formData = new FormData();
+    formData.append('message', sendText);
+    if (fileInput && fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
     var res = await fetch('/admin/contacts/${senderId}/send', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message: sendText })
+      body: formData
     });
     var data = await res.json();
     if (data.success) {
       result.textContent = '✅ 送信完了！'; result.style.color = 'green';
       document.getElementById('newMsgJa').value = '';
       document.getElementById('newMsgEn').value = '';
+      if (fileInput) fileInput.value = '';
       setTimeout(function(){ location.reload(); }, 1500);
     } else {
       result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red';
@@ -342,6 +346,11 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="en"> 英語訳</label>'
     + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="both"> 両方送信</label>'
     + '</div>'
+    + '<div style="margin-bottom:12px;">'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
+    + '<input type="file" id="newMsgFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
+    + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
+    + '</div>'
     + '<button onclick="sendNewMessage()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">📤 送信</button>'
     + '<span id="newMsgResult" style="margin-left:12px;font-weight:bold;font-size:14px;"></span>'
     + '</div>'
@@ -350,43 +359,73 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '</body></html>');
 });
 
-// 新規メッセージ送信API
-router.post('/:senderId/send', requireAuth, async (req, res) => {
+// 新規メッセージ送信API（ファイル添付対応）
+const multerContact = require('multer');
+const axiosContact = require('axios');
+const FormDataContact = require('form-data');
+const uploadContact = multerContact({ storage: multerContact.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
   const { senderId } = req.params;
   const { message } = req.body;
-  if (!message || !message.trim()) return res.json({ success: false, error: 'メッセージが空です' });
+  const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+
+  if (!message && !req.file) return res.json({ success: false, error: 'メッセージまたはファイルが必要です' });
 
   try {
     // 署名をセッションから取得
     let signature = req.session.adminSignature || '';
     if (!signature) {
-      const adminSnapshot = await db.collection('admins').where('userId', '==', req.session.adminId).limit(1).get();
-      if (!adminSnapshot.empty) {
-        signature = adminSnapshot.docs[0].data().signature || '';
-        req.session.adminSignature = signature;
+      try {
+        const adminSnapshot = await db.collection('admins').where('userId', '==', req.session.adminId).limit(1).get();
+        if (!adminSnapshot.empty) {
+          signature = adminSnapshot.docs[0].data().signature || '';
+          req.session.adminSignature = signature;
+        }
+      } catch(e) {}
+    }
+
+    const sendText = (message || '') + (signature ? '\n\n' + signature : '');
+
+    // テキスト送信
+    if (sendText.trim()) {
+      const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: { id: senderId },
+          message: { text: sendText },
+          messaging_type: 'RESPONSE'
+        })
+      });
+      const data = await response.json();
+      if (data.error) {
+        console.error('個別送信エラー:', data.error.message);
+        return res.json({ success: false, error: data.error.message });
       }
     }
 
-    // 署名込みのテキスト
-    const sendText = message + (signature ? '\n\n' + signature : '');
-
-    // HUMAN_AGENTタグで送信（24時間超えでも可能）
-    const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-    const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    // ファイル添付送信
+    let attachmentName = null;
+    if (req.file) {
+      const fileType = getAttachmentType(req.file.mimetype);
+      attachmentName = req.file.originalname;
+      const uploadUrl = 'https://graph.facebook.com/v19.0/me/message_attachments?access_token=' + PAGE_ACCESS_TOKEN;
+      const form = new FormDataContact();
+      form.append('message', JSON.stringify({ attachment: { type: fileType, payload: { is_reusable: true } } }));
+      form.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
+      const uploadRes = await axiosContact.post(uploadUrl, form, { headers: form.getHeaders() });
+      const attachmentId = uploadRes.data.attachment_id;
+      const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+      await axiosContact.post(msgUrl, {
         recipient: { id: senderId },
-        message: { text: sendText },
-        messaging_type: 'MESSAGE_TAG',
-        tag: 'HUMAN_AGENT'
-      })
-    });
-    const data = await response.json();
-    if (data.error) return res.json({ success: false, error: data.error.message });
+        message: { attachment: { type: fileType, payload: { attachment_id: attachmentId } } },
+        messaging_type: 'RESPONSE'
+      });
+    }
 
     // contactsから名前取得
     const contactDoc = await db.collection('contacts').doc(senderId).get();
@@ -398,18 +437,19 @@ router.post('/:senderId/send', requireAuth, async (req, res) => {
       senderId,
       senderName,
       senderPicture: null,
-      message: '[送信] ' + message,
+      message: '[送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
       replyMessage: sendText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: '対応済み',
+      attachmentName,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    console.log('新規メッセージ送信成功:', senderId);
+    console.log('個別送信成功:', senderId, senderName);
     res.json({ success: true });
   } catch (err) {
-    console.error('新規送信エラー:', err.message);
+    console.error('個別送信エラー:', err.message);
     res.json({ success: false, error: err.message });
   }
 });
