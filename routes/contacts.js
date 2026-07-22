@@ -350,6 +350,7 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
     if (req.file) {
       const fileType = getAttachmentType(req.file.mimetype);
       attachmentName = req.file.originalname;
+      console.log('ファイルアップ開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
       const uploadUrl = 'https://graph.facebook.com/v19.0/me/message_attachments?access_token=' + PAGE_ACCESS_TOKEN;
       const form = new FormDataContact();
       form.append('message', JSON.stringify({ attachment: { type: fileType, payload: { is_reusable: true } } }));
@@ -387,7 +388,7 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
     console.log('個別送信成功:', senderId, senderName);
     res.json({ success: true });
   } catch (err) {
-    console.error('個別送信エラー:', err.message);
+    console.error('個別送信エラー:', err.message, err.response ? JSON.stringify(err.response.data) : '');
     res.json({ success: false, error: err.message });
   }
 });
