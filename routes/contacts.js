@@ -242,6 +242,56 @@ async function saveProfile() {
     msg.textContent = '✗ エラー: ' + e.message; msg.style.color = 'red';
   }
 }
+async function translateNewMsg() {
+  var text = document.getElementById('newMsgJa').value.trim();
+  if (!text) { alert('翻訳するテキストを入力してください'); return; }
+  var transEl = document.getElementById('newMsgEn');
+  transEl.value = '翻訳中...';
+  try {
+    var res = await fetch('/admin/translate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text: text, targetLang: 'EN' })
+    });
+    var data = await res.json();
+    transEl.value = data.success ? data.text : '翻訳失敗';
+  } catch(e) {
+    transEl.value = 'エラー: ' + e.message;
+  }
+}
+
+async function sendNewMessage() {
+  var langEl = document.querySelector('input[name="newMsgLang"]:checked');
+  var lang = langEl ? langEl.value : 'ja';
+  var jaText = document.getElementById('newMsgJa').value.trim();
+  var enText = document.getElementById('newMsgEn').value.trim();
+  var result = document.getElementById('newMsgResult');
+  var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\n\n' + enText : '');
+  if (!sendText) {
+    result.textContent = '△ メッセージを入力してください';
+    result.style.color = 'orange'; return;
+  }
+  result.textContent = '送信中...'; result.style.color = 'gray';
+  try {
+    var res = await fetch('/admin/contacts/${senderId}/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: sendText })
+    });
+    var data = await res.json();
+    if (data.success) {
+      result.textContent = '✅ 送信完了！'; result.style.color = 'green';
+      document.getElementById('newMsgJa').value = '';
+      document.getElementById('newMsgEn').value = '';
+      setTimeout(function(){ location.reload(); }, 1500);
+    } else {
+      result.textContent = '✗ 送信失敗: ' + data.error; result.style.color = 'red';
+    }
+  } catch(e) {
+    result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red';
+  }
+}
+
 window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
 </script>`;
 
@@ -271,9 +321,97 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + messengerLinkHtml(senderId)
     + profileHtml
     + '<div class="card"><h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>' + messages + '</div>'
+    + '<div class="card" style="border:2px solid #2980b9;">'
+    + '<h3 style="margin-top:0;color:#2980b9;">✉️ 新規メッセージ送信</h3>'
+    + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため24時間以上経過していても送信可能です。</p>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">'
+    + '<div>'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
+    + '<textarea id="newMsgJa" rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;resize:vertical;" placeholder="送信するメッセージを入力..."></textarea>'
+    + '<button onclick="translateNewMsg()" style="margin-top:6px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
+    + '</div>'
+    + '<div>'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🌐 英語訳（自動）</label>'
+    + '<textarea id="newMsgEn" rows="4" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;box-sizing:border-box;resize:vertical;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
+    + '<div style="margin-top:4px;font-size:11px;color:#888;">※ 編集して送信も可能です</div>'
+    + '</div>'
+    + '</div>'
+    + '<div style="margin-bottom:12px;">'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;">送信言語：</label>'
+    + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="newMsgLang" value="ja" checked> 日本語</label>'
+    + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="en"> 英語訳</label>'
+    + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="both"> 両方送信</label>'
+    + '</div>'
+    + '<button onclick="sendNewMessage()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">📤 送信</button>'
+    + '<span id="newMsgResult" style="margin-left:12px;font-weight:bold;font-size:14px;"></span>'
+    + '</div>'
     + '</div>'
     + script
     + '</body></html>');
+});
+
+// 新規メッセージ送信API
+router.post('/:senderId/send', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const { senderId } = req.params;
+  const { message } = req.body;
+  if (!message || !message.trim()) return res.json({ success: false, error: 'メッセージが空です' });
+
+  try {
+    // 署名をセッションから取得
+    let signature = req.session.adminSignature || '';
+    if (!signature) {
+      const adminSnapshot = await db.collection('admins').where('userId', '==', req.session.adminId).limit(1).get();
+      if (!adminSnapshot.empty) {
+        signature = adminSnapshot.docs[0].data().signature || '';
+        req.session.adminSignature = signature;
+      }
+    }
+
+    // 署名込みのテキスト
+    const sendText = message + (signature ? '\n\n' + signature : '');
+
+    // HUMAN_AGENTタグで送信（24時間超えでも可能）
+    const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+    const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: { id: senderId },
+        message: { text: sendText },
+        messaging_type: 'MESSAGE_TAG',
+        tag: 'HUMAN_AGENT'
+      })
+    });
+    const data = await response.json();
+    if (data.error) return res.json({ success: false, error: data.error.message });
+
+    // contactsから名前取得
+    const contactDoc = await db.collection('contacts').doc(senderId).get();
+    const profile = contactDoc.exists ? contactDoc.data() : {};
+    const senderName = profile.passportName || '不明';
+
+    // messagesコレクションに記録
+    await db.collection('messages').add({
+      senderId,
+      senderName,
+      senderPicture: null,
+      message: '[送信] ' + message,
+      replyMessage: sendText,
+      replyAdmin: req.session.adminDisplayName || '管理者',
+      repliedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: '対応済み',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log('新規メッセージ送信成功:', senderId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('新規送信エラー:', err.message);
+    res.json({ success: false, error: err.message });
+  }
 });
 
 // プロフィール保存API
