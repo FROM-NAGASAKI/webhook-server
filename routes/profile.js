@@ -1,0 +1,164 @@
+const express = require('express');
+const router = express.Router();
+const { requireAuth, hashPassword } = require('../helpers/auth');
+const { navHtml, commonCss } = require('../helpers/html');
+
+// マイプロフィール画面
+router.get('/', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const adminId = req.session.adminId;
+
+  const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+  if (snapshot.empty) return res.status(404).send('管理者が見つかりません');
+  const adminData = snapshot.docs[0].data();
+  const docId = snapshot.docs[0].id;
+
+  res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
+    + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
+    + '<title>マイプロフィール</title>'
+    + '<style>' + commonCss()
+    + '.card{background:white;border-radius:8px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.1);margin-bottom:24px;max-width:600px;}'
+    + 'label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}'
+    + 'input[type=text],input[type=password]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:16px;}'
+    + 'textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;resize:vertical;}'
+    + 'button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:12px;}'
+    + 'button.save:hover{background:#1a6fa8;}'
+    + '.section{margin-bottom:32px;}'
+    + '.section h3{margin-top:0;color:#2c3e50;border-bottom:2px solid #eee;padding-bottom:8px;}'
+    + '</style></head><body>'
+    + '<header><h1>👤 マイプロフィール</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
+    + '<div class="container">'
+    + '<div class="card">'
+
+    // 署名編集
+    + '<div class="section">'
+    + '<h3>✏️ 署名設定</h3>'
+    + '<p style="font-size:13px;color:#888;margin-top:0;">返信メッセージの末尾に自動付加されます。</p>'
+    + '<label>署名</label>'
+    + '<textarea id="signature" rows="6" placeholder="例：担当：村上&#10;FROMながさき協同組合&#10;TEL: 095-XXX-XXXX&#10;mail: info@from-nagasaki.jp">' + (adminData.signature || '') + '</textarea>'
+    + '<button class="save" onclick="saveSignature()">💾 署名を保存</button>'
+    + '<span id="signatureMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
+
+    // 表示名編集
+    + '<div class="section">'
+    + '<h3>🏷️ 表示名設定</h3>'
+    + '<label>表示名</label>'
+    + '<input type="text" id="displayName" value="' + (adminData.displayName || '') + '" placeholder="例：村上 志信">'
+    + '<button class="save" onclick="saveDisplayName()">💾 表示名を保存</button>'
+    + '<span id="displayNameMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
+
+    // パスワード変更
+    + '<div class="section">'
+    + '<h3>🔑 パスワード変更</h3>'
+    + '<label>現在のパスワード</label>'
+    + '<input type="password" id="currentPass" placeholder="現在のパスワードを入力">'
+    + '<label>新しいパスワード</label>'
+    + '<input type="password" id="newPass" placeholder="新しいパスワードを入力">'
+    + '<label>新しいパスワード（確認）</label>'
+    + '<input type="password" id="confirmPass" placeholder="新しいパスワードを再入力">'
+    + '<button class="save" onclick="changePassword()">🔑 パスワードを変更</button>'
+    + '<span id="passwordMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
+
+    + '</div></div>'
+    + '<script>'
+    + 'async function saveSignature(){'
+    + 'var msg=document.getElementById("signatureMsg");'
+    + 'msg.textContent="保存中...";msg.style.color="gray";'
+    + 'var signature=document.getElementById("signature").value;'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/signature",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({signature})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ 保存しました";msg.style.color="green";}'
+    + 'else{msg.textContent="✗ 保存失敗: "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function saveDisplayName(){'
+    + 'var msg=document.getElementById("displayNameMsg");'
+    + 'msg.textContent="保存中...";msg.style.color="gray";'
+    + 'var displayName=document.getElementById("displayName").value.trim();'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/displayname",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({displayName})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ 保存しました";msg.style.color="green";setTimeout(function(){location.reload();},1000);}'
+    + 'else{msg.textContent="✗ 保存失敗: "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function changePassword(){'
+    + 'var msg=document.getElementById("passwordMsg");'
+    + 'var current=document.getElementById("currentPass").value;'
+    + 'var newPass=document.getElementById("newPass").value;'
+    + 'var confirm=document.getElementById("confirmPass").value;'
+    + 'if(!current||!newPass||!confirm){msg.textContent="△ すべての項目を入力してください";msg.style.color="orange";return;}'
+    + 'if(newPass!==confirm){msg.textContent="△ 新しいパスワードが一致しません";msg.style.color="orange";return;}'
+    + 'if(newPass.length<6){msg.textContent="△ パスワードは6文字以上にしてください";msg.style.color="orange";return;}'
+    + 'msg.textContent="変更中...";msg.style.color="gray";'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({currentPassword:current,newPassword:newPass})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ パスワードを変更しました";msg.style.color="green";document.getElementById("currentPass").value="";document.getElementById("newPass").value="";document.getElementById("confirmPass").value="";}'
+    + 'else{msg.textContent="✗ "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+    + '</script></body></html>');
+});
+
+// 署名保存API
+router.post('/signature', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { signature } = req.body;
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    await snapshot.docs[0].ref.update({ signature, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 表示名保存API
+router.post('/displayname', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { displayName } = req.body;
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    await snapshot.docs[0].ref.update({ displayName, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    req.session.adminDisplayName = displayName;
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// パスワード変更API
+router.post('/password', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { currentPassword, newPassword } = req.body;
+  const { hashPassword } = require('../helpers/auth');
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    const adminData = snapshot.docs[0].data();
+    if (adminData.passwordHash !== hashPassword(currentPassword)) {
+      return res.json({ success: false, error: '現在のパスワードが正しくありません' });
+    }
+    await snapshot.docs[0].ref.update({ passwordHash: hashPassword(newPassword), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+module.exports = router;
