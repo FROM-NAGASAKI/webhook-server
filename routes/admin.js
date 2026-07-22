@@ -319,10 +319,6 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       attachmentUrl = msgRes.data.attachment_url || null;
     }
 
-    if (message && message.trim()) {
-      await sendMessage(senderId, message);
-    }
-
     // 署名をセッションから取得（なければFirestoreから取得）
     let signature = req.session.adminSignature || '';
     if (!signature) {
@@ -335,7 +331,13 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       } catch (e) {}
     }
 
+    // 署名込みのテキストを作成
     const replyText = (message || '') + (signature ? '\n\n' + signature : '');
+
+    // 署名込みで送信
+    if (replyText.trim()) {
+      await sendMessage(senderId, replyText);
+    }
 
     await docRef.update({
       status: '対応済み',
