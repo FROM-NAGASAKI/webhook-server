@@ -92,7 +92,7 @@ router.get('/:senderId', requireAuth, async (req, res) => {
       + '<div style="font-size:12px;margin-top:4px;color:' + statusColor + ';">' + status + '</div>'
       + '</div>';
 
-    if (d.replyMessage || d.attachmentName) {
+    if (d.replyAdmin && (d.replyMessage || d.attachmentName)) {
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
       const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
       html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:60%;">'
