@@ -277,10 +277,7 @@ async function sendNewMessage() {
     var formData = new FormData();
     formData.append('message', sendText);
     if (fileInput && fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/contacts/${senderId}/send', {
-      method: 'POST',
-      body: formData
-    });
+    var res = await fetch('/admin/contacts/${senderId}/send', { method: 'POST', body: formData });
     var data = await res.json();
     if (data.success) {
       result.textContent = '✅ 送信完了！'; result.style.color = 'green';
