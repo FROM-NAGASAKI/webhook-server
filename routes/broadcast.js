@@ -69,7 +69,7 @@ router.get('/', requireAuth, async (req, res) => {
   const rows = filtered.map(m => {
     const over24 = m.diffHours > 24;
     const badge = over24
-      ? '<span style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h超</span>'
+      ? '<span class="badge-over24" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h超</span>'
       : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h内</span>';
     return '<tr>'
       + '<td style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '" checked></td>'
@@ -185,6 +185,8 @@ router.get('/', requireAuth, async (req, res) => {
     + 'var targets=[...document.querySelectorAll("input[name=\'targets\']:checked")].map(function(c){return c.value;});'
     + 'if(!sendText&&(!fileInput.files||fileInput.files.length===0)){alert("メッセージまたはファイルを入力してください");return;}'
     + 'if(targets.length===0){alert("送信対象を選択してください");return;}'
+    + 'var over24Users=[...document.querySelectorAll("input[name='targets']:checked")].filter(function(c){var row=c.closest("tr");return row&&row.querySelector(".badge-over24");}).map(function(c){var row=c.closest("tr");return row.querySelector("strong").textContent;});'
+    + 'if(over24Users.length>0){alert("⚠️ 以下のユーザーは最終メッセージから24時間以上経過しているため送信できません。\n個別にメッセージを送信してください。\n\n"+over24Users.join("\n"));return;}'
     + 'if(!confirm(targets.length+"名に送信します。よろしいですか？"))return;'
     + 'var btn=document.getElementById("sendBtn");'
     + 'btn.disabled=true;btn.textContent="送信中...";'
@@ -241,7 +243,7 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
 
     const sendText = (message || '') + (signature ? '\n\n' + signature : '');
 
-    // テキスト送信
+    // テキスト送信（通常送信）
     if (sendText.trim()) {
       const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
       const response = await fetch(url, {
@@ -250,8 +252,7 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
         body: JSON.stringify({
           recipient: { id: senderId },
           message: { text: sendText },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
+          messaging_type: 'RESPONSE'
         })
       });
       const data = await response.json();
@@ -275,8 +276,7 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
       await axios.post(msgUrl, {
         recipient: { id: senderId },
         message: { attachment: { type: fileType, payload: { attachment_id: attachmentId } } },
-        messaging_type: 'MESSAGE_TAG',
-        tag: 'HUMAN_AGENT'
+        messaging_type: 'RESPONSE'
       });
     }
 
