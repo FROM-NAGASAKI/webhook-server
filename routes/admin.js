@@ -155,49 +155,47 @@ router.get('/', requireAuth, async (req, res) => {
       : '';
     const countBadge = '<span style="color:#999;font-size:12px;margin-left:6px;">(' + t.count + '件)</span>';
 
-    // 返信対象は「未対応の中で一番新しいメッセージ」。無ければ返信ボタンは表示しない
+    // 返信対象：未対応メッセージがあればそれを更新（mode=update）、無ければ新規メッセージとして送信（mode=new）
     const replyDocId = t.replyTargetDoc ? t.replyTargetDoc.id : null;
+    const mode = replyDocId ? 'update' : 'new';
+    const formId = replyDocId || ('new_' + sid); // フォーム要素のID生成に使う一意な値
 
-    const replyBtn = replyDocId
-      ? '<button onclick="openReply(\'' + replyDocId + '\')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>'
-      : '';
+    const replyBtn = '<button onclick="openReply(\'' + formId + '\')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>';
 
-    const replyForm = replyDocId
-      ? '<tr id="reply-' + replyDocId + '" style="display:none;background:#f0f7ff;">'
+    const replyForm = '<tr id="reply-' + formId + '" style="display:none;background:#f0f7ff;">'
         + '<td colspan="9" style="padding:12px;">'
         + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
         + '<div>'
         + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
-        + '<textarea id="text-' + replyDocId + '" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>'
-        + '<br><button onclick="translateAdminReply(\'' + replyDocId + '\')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
+        + '<textarea id="text-' + formId + '" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="' + (mode === 'update' ? '返信メッセージを入力（任意）...' : '送信するメッセージを入力...') + '"></textarea>'
+        + '<br><button onclick="translateAdminReply(\'' + formId + '\')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
         + '</div>'
         + '<div>'
         + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🌐 英語訳（自動）</label>'
-        + '<textarea id="translated-' + replyDocId + '" rows="3" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;box-sizing:border-box;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
+        + '<textarea id="translated-' + formId + '" rows="3" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;box-sizing:border-box;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
         + '<div style="margin-top:4px;font-size:11px;color:#888;">※ 編集して送信も可能です</div>'
         + '</div>'
         + '</div>'
         + '<div style="margin-bottom:8px;">'
         + '<label style="font-size:12px;color:#555;font-weight:bold;">送信言語：</label>'
-        + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="ja" checked> 日本語</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="en"> 英語訳</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="both"> 両方送信</label>'
+        + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-' + formId + '" value="ja" checked> 日本語</label>'
+        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + formId + '" value="en"> 英語訳</label>'
+        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + formId + '" value="both"> 両方送信</label>'
         + '</div>'
         + '<div style="margin-bottom:8px;">'
         + '<label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
-        + '<input type="file" id="file-' + replyDocId + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
+        + '<input type="file" id="file-' + formId + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
         + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
         + '</div>'
         + '<small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>'
         + '<div style="margin-top:10px;">'
-        + '<button onclick="sendReply(\'' + replyDocId + '\',\'' + sid + '\')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>'
-        + '<button onclick="closeReply(\'' + replyDocId + '\')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>'
-        + '<span id="result-' + replyDocId + '" style="margin-left:12px;font-weight:bold;"></span>'
+        + '<button onclick="sendReply(\'' + formId + '\',\'' + sid + '\',\'' + mode + '\')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>'
+        + '<button onclick="closeReply(\'' + formId + '\')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>'
+        + '<span id="result-' + formId + '" style="margin-left:12px;font-weight:bold;"></span>'
         + '</div>'
-        + '</td></tr>'
-      : '';
+        + '</td></tr>';
 
-    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + (replyDocId || '') + '">'
+    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
       + '<td>' + date + '</td>'
       + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
       + '<div><div style="font-weight:bold;">' + fbName + unreadBadge + countBadge + '</div>'
@@ -292,13 +290,13 @@ async function translateAdminReply(docId) {
   }
 }
 
-async function sendReply(docId, senderId) {
-  var langEl = document.querySelector('input[name="lang-' + docId + '"]:checked');
+async function sendReply(formId, senderId, mode) {
+  var langEl = document.querySelector('input[name="lang-' + formId + '"]:checked');
   var lang = langEl ? langEl.value : 'ja';
-  var jaText = document.getElementById('text-' + docId).value.trim();
-  var enText = document.getElementById('translated-' + docId).value.trim();
-  var fileInput = document.getElementById('file-' + docId);
-  var result = document.getElementById('result-' + docId);
+  var jaText = document.getElementById('text-' + formId).value.trim();
+  var enText = document.getElementById('translated-' + formId).value.trim();
+  var fileInput = document.getElementById('file-' + formId);
+  var result = document.getElementById('result-' + formId);
   var sendText = lang === 'ja' ? jaText : lang === 'en' ? enText : jaText + (enText ? '\\n\\n' + enText : '');
   if (!sendText && (!fileInput.files || fileInput.files.length === 0)) {
     result.textContent = '△ メッセージまたはファイルを入力してください';
@@ -306,12 +304,20 @@ async function sendReply(docId, senderId) {
   }
   result.textContent = '送信中...'; result.style.color = 'gray';
   try {
-    var formData = new FormData();
-    formData.append('docId', docId);
-    formData.append('senderId', senderId);
-    formData.append('message', sendText);
-    if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
-    var res = await fetch('/admin/reply', { method: 'POST', body: formData });
+    var res;
+    if (mode === 'update') {
+      var formData = new FormData();
+      formData.append('docId', formId);
+      formData.append('senderId', senderId);
+      formData.append('message', sendText);
+      if (fileInput.files && fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
+      res = await fetch('/admin/reply', { method: 'POST', body: formData });
+    } else {
+      var formData2 = new FormData();
+      formData2.append('message', sendText);
+      if (fileInput.files && fileInput.files.length > 0) formData2.append('file', fileInput.files[0]);
+      res = await fetch('/admin/contacts/' + senderId + '/send', { method: 'POST', body: formData2 });
+    }
     var data = await res.json();
     if (data.success) {
       result.textContent = '✅ 送信完了！'; result.style.color = 'green';
