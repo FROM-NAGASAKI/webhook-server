@@ -199,18 +199,18 @@ router.get('/', requireAuth, async (req, res) => {
         + '</td></tr>';
 
     return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
-      + '<td>' + date + '</td>'
-      + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
+      + '<td data-label="受信日時">' + date + '</td>'
+      + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
       + '<div><div style="font-weight:bold;">' + fbName + unreadBadge + countBadge + '</div>'
       + '<div style="font-size:12px;color:#888;margin-top:2px;">' + registeredNameLabel + '</div></div>'
       + '</a></td>'
-      + '<td>' + (profile.workplace || '—') + '</td>'
-      + '<td>' + (profile.residenceStatus || '—') + '</td>'
-      + '<td>' + (d.message || '—') + '</td>'
-      + '<td>' + replyHtml + '</td>'
-      + '<td>' + (d.replyAdmin || '—') + '</td>'
-      + '<td style="color:' + statusColor + ';font-weight:bold;">' + (d.status || '未対応') + '</td>'
-      + '<td>' + replyBtn + '</td>'
+      + '<td data-label="所属事業所">' + (profile.workplace || '—') + '</td>'
+      + '<td data-label="在留資格">' + (profile.residenceStatus || '—') + '</td>'
+      + '<td data-label="メッセージ">' + (d.message || '—') + '</td>'
+      + '<td data-label="返信メッセージ">' + replyHtml + '</td>'
+      + '<td data-label="返信した管理者">' + (d.replyAdmin || '—') + '</td>'
+      + '<td data-label="ステータス" style="color:' + statusColor + ';font-weight:bold;">' + (d.status || '未対応') + '</td>'
+      + '<td data-label="操作">' + replyBtn + '</td>'
       + '</tr>' + replyForm;
   }).join('');
 
@@ -360,6 +360,20 @@ setInterval(checkNewMessages, 60000);
     + 'th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;font-size:13px;}'
     + 'td{padding:12px 16px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top;}'
     + 'tr.msg-row:hover td{background:#f8f9fa;}'
+    + '@media (max-width:768px){'
+    + '.container{padding:8px;}'
+    + '.search-bar{padding:10px;gap:6px;}'
+    + '.search-bar input,.search-bar select,.btn-clear{width:100%;min-width:0;flex:none;}'
+    + '.search-count{width:100%;text-align:right;}'
+    + 'table,thead,tbody{display:block;width:100%;}'
+    + 'thead{display:none;}'
+    + 'tr.msg-row{display:block;background:white;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.12);margin-bottom:10px;padding:10px 14px;}'
+    + 'tr.msg-row td{display:block;padding:6px 0;border-bottom:1px solid #f0f0f0;}'
+    + 'tr.msg-row td:last-child{border-bottom:none;}'
+    + 'tr.msg-row td[data-label]:before{content:attr(data-label);display:block;font-size:11px;font-weight:bold;color:#999;margin-bottom:2px;}'
+    + 'tr.msg-row td[data-label="名前"]:before{display:none;}'
+    + 'tr[id^="reply-"] td{display:block;padding:0;border:none;}'
+    + '}'
     + '</style></head><body>'
     + '<header><h1>📋 問い合わせ管理画面</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container" style="overflow-x:auto;">'
