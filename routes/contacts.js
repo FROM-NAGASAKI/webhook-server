@@ -79,10 +79,13 @@ router.get('/', requireAuth, async (req, res) => {
     const profile = profileMap[u.senderId] || {};
     const fbName = u.senderName || '不明';
     const registeredName = profile.passportName || '';
+    const registeredNameLabel = registeredName
+      ? '登録名：' + registeredName
+      : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
     return '<tr onclick="location.href=\'/admin/contacts/' + u.senderId + '\'" style="cursor:pointer;">'
       + '<td><div style="display:flex;align-items:flex-start;">' + avatarHtml(fbName, u.senderPicture)
       + '<div><div><strong>' + fbName + '</strong>' + unreadBadge + '</div>'
-      + '<div style="font-size:12px;color:#888;margin-top:2px;">登録名：' + (registeredName || '未登録') + '</div></div>'
+      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + registeredNameLabel + '</div></div>'
       + '</div></td>'
       + '<td>' + (profile.workplace || '—') + '</td><td>' + (profile.residenceStatus || '—') + '</td>'
       + '<td>' + u.lastMessage + '</td><td>' + lastDate + '</td><td>' + u.count + '</td>'
@@ -160,10 +163,14 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     return html;
   }).join('');
 
+  const nameCandidateHint = (!profile.passportName && profile.nameCandidate)
+    ? '<div style="font-size:12px;color:#e67e22;margin-top:4px;">💡 候補（本人からの返信）：' + profile.nameCandidate + '　※内容を確認の上、そのまま保存もできます</div>'
+    : '';
+
   const profileHtml = '<div class="card">'
     + '<h3 style="margin-top:0;color:#2c3e50;">📝 プロフィール情報</h3>'
     + '<div class="profile-grid">'
-    + '<div><label>パスポートネーム</label><input type="text" id="passportName" value="' + (profile.passportName || '') + '" placeholder="例：MURAKAMI TARO"></div>'
+    + '<div><label>パスポートネーム</label><input type="text" id="passportName" value="' + (profile.passportName || profile.nameCandidate || '') + '" placeholder="例：MURAKAMI TARO">' + nameCandidateHint + '</div>'
     + '<div><label>所属事業所</label><input type="text" id="workplace" value="' + (profile.workplace || '') + '" placeholder="例：株式会社FROM長崎"></div>'
     + '<div><label>在留資格</label><input type="text" id="residenceStatus" value="' + (profile.residenceStatus || '') + '" placeholder="例：技能実習"></div>'
     + '<div><label>入国日</label><input type="date" id="entryDate" value="' + (profile.entryDate || '') + '"></div>'
@@ -459,16 +466,12 @@ router.post('/:senderId/profile', requireAuth, async (req, res) => {
   const { senderId } = req.params;
   const { passportName, workplace, residenceStatus, entryDate, searchTags, notes } = req.body;
   try {
+    // 注意：senderName（FBアカウント名）は登録名で上書きしない。
+    // 「FB名」と「登録名」は別物として管理するため、messagesドキュメントは更新しない。
     await db.collection('contacts').doc(senderId).set(
       { passportName, workplace, residenceStatus, entryDate, searchTags, notes, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
-    if (passportName) {
-      const msgSnapshot = await db.collection('messages').where('senderId', '==', senderId).get();
-      const batch = db.batch();
-      msgSnapshot.docs.forEach(doc => { batch.update(doc.ref, { senderName: passportName }); });
-      await batch.commit();
-    }
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });

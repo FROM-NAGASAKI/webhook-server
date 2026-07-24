@@ -143,6 +143,9 @@ router.get('/', requireAuth, async (req, res) => {
     const profile = profileMap[sid] || {};
     const fbName = d.senderName || '不明';
     const registeredName = profile.passportName || '';
+    const registeredNameLabel = registeredName
+      ? '登録名：' + registeredName
+      : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
     const displayName = registeredName || fbName; // 検索用・並び替え用に使う代表名
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
@@ -199,7 +202,7 @@ router.get('/', requireAuth, async (req, res) => {
       + '<td>' + date + '</td>'
       + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
       + '<div><div style="font-weight:bold;">' + fbName + unreadBadge + countBadge + '</div>'
-      + '<div style="font-size:12px;color:#888;margin-top:2px;">登録名：' + (registeredName || '未登録') + '</div></div>'
+      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + registeredNameLabel + '</div></div>'
       + '</a></td>'
       + '<td>' + (profile.workplace || '—') + '</td>'
       + '<td>' + (profile.residenceStatus || '—') + '</td>'
