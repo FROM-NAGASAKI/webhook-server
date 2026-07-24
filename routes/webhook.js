@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const VERIFY_TOKEN = 'union_support_verify_2024';
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
 // Webhook認証
 router.get('/webhook', (req, res) => {
@@ -10,6 +12,25 @@ router.get('/webhook', (req, res) => {
   if (mode === 'subscribe' && token === VERIFY_TOKEN) res.status(200).send(challenge);
   else res.sendStatus(403);
 });
+
+// FacebookのユーザープロフィールAPIから実名・アイコンを取得する
+// 失敗した場合は null を返す（呼び出し側で「不明」等にフォールバックする）
+async function fetchFacebookProfile(senderId) {
+  try {
+    const url = 'https://graph.facebook.com/v19.0/' + senderId
+      + '?fields=first_name,last_name,profile_pic&access_token=' + PAGE_ACCESS_TOKEN;
+    const res = await axios.get(url);
+    const data = res.data || {};
+    const name = [data.first_name, data.last_name].filter(Boolean).join(' ').trim();
+    return {
+      fbName: name || null,
+      fbPicture: data.profile_pic || null
+    };
+  } catch (err) {
+    console.error('Facebookプロフィール取得エラー:', senderId, err.response ? JSON.stringify(err.response.data) : err.message);
+    return null;
+  }
+}
 
 // メッセージ受信
 router.post('/webhook', async (req, res) => {
@@ -23,16 +44,34 @@ router.post('/webhook', async (req, res) => {
         const senderId = event.sender.id;
         const messageText = event.message.text || '';
         const attachments = event.message.attachments || [];
-
         console.log('Webhook受信:', senderId, messageText, '添付:', attachments.length);
 
-        // contactsコレクションから既存の名前を取得
+        // contactsコレクションからキャッシュ済みのFB名・登録名を取得
         let senderName = '不明';
         let senderPicture = null;
         try {
           const contactDoc = await db.collection('contacts').doc(senderId).get();
-          if (contactDoc.exists && contactDoc.data().passportName) {
-            senderName = contactDoc.data().passportName;
+          const contactData = contactDoc.exists ? contactDoc.data() : {};
+
+          if (contactData.fbName) {
+            // すでにFB名をキャッシュ済みならそれを使う（毎回APIを呼ばない）
+            senderName = contactData.fbName;
+            senderPicture = contactData.fbPicture || null;
+          } else {
+            // 初回、またはまだ取得できていない場合はFacebook Graph APIから取得
+            const profile = await fetchFacebookProfile(senderId);
+            if (profile && profile.fbName) {
+              senderName = profile.fbName;
+              senderPicture = profile.fbPicture;
+              await db.collection('contacts').doc(senderId).set({
+                fbName: profile.fbName,
+                fbPicture: profile.fbPicture,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+              console.log('FBプロフィール取得・保存成功:', senderId, profile.fbName);
+            } else {
+              console.log('FBプロフィール取得失敗、"不明"のまま保存:', senderId);
+            }
           }
         } catch (err) {
           console.error('contacts取得エラー:', err.message);
@@ -47,16 +86,13 @@ router.post('/webhook', async (req, res) => {
                 att.type === 'audio' ? '音声' :
                 att.type === 'file' ? (att.payload && att.payload.name) || 'ファイル' : '添付ファイル'
         }));
-
         // 後方互換のため単一添付も保持
         const firstAtt = attachmentList[0] || null;
         const attachmentName = firstAtt ? firstAtt.name : null;
         const attachmentType = firstAtt ? firstAtt.type : null;
         const attachmentUrl = firstAtt ? firstAtt.url : null;
-
         const attLabel = attachmentList.map(a => '[' + a.name + ']').join(' ');
         const displayMessage = messageText || attLabel || '（テキストなし）';
-
         try {
           await db.collection('messages').add({
             senderId,
