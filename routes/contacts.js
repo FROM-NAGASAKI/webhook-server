@@ -20,14 +20,15 @@ cloudinary.config({
 async function normalizeImageBuffer(buffer, mimetype) {
   if (!mimetype || !mimetype.startsWith('image/')) return buffer; // 画像以外はそのまま
   try {
+    // failOn:'none' で軽微な破損（不完全なチャンク等）があっても可能な限り読み込む
     if (mimetype === 'image/png') {
-      return await sharp(buffer).png().toBuffer();
+      return await sharp(buffer, { failOn: 'none' }).png().toBuffer();
     }
     if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
-      return await sharp(buffer).jpeg().toBuffer();
+      return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
     }
     // その他の画像形式は汎用的にJPEGへ変換
-    return await sharp(buffer).jpeg().toBuffer();
+    return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
   } catch (e) {
     console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
     return buffer; // 失敗しても元のバッファでアップロードを試みる
