@@ -6,6 +6,34 @@ const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = re
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
+// Cloudinary設定（Railway環境変数から取得）
+const cloudinary = require('cloudinary').v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
+function uploadToCloudinary(buffer, originalname, mimetype) {
+  return new Promise((resolve, reject) => {
+    console.log('uploadToCloudinary詳細: size=' + buffer.length + ' bytes, mimetype=' + mimetype + ', name=' + originalname);
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'auto' // 画像・PDF・Word・Excelなどをまとめて扱う。folder/filenameオプションは切り分けのため一旦外す
+      },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinaryエラー詳細:', JSON.stringify(error));
+          return reject(error);
+        }
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
 // ユーザー一覧
 router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
@@ -296,7 +324,7 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '</body></html>');
 });
 
-// 新規メッセージ送信API（ファイル添付対応）
+// 新規メッセージ送信API（ファイル添付対応・Cloudinary経由）
 const multerContact = require('multer');
 const axiosContact = require('axios');
 const FormDataContact = require('form-data');
@@ -345,24 +373,28 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
       }
     }
 
-    // ファイル添付送信
+    // ファイル添付送信（Cloudinaryにアップロードし、公開URLをMessengerに渡す）
+    // /me/message_attachments を使わないため権限不足エラー(#100 2018047)を回避できる
     let attachmentName = null;
+    let attachmentUrl = null;
     if (req.file) {
       const fileType = getAttachmentType(req.file.mimetype);
       attachmentName = req.file.originalname;
-      console.log('ファイルアップ開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
-      const uploadUrl = 'https://graph.facebook.com/v19.0/me/message_attachments?access_token=' + PAGE_ACCESS_TOKEN;
-      const form = new FormDataContact();
-      form.append('message', JSON.stringify({ attachment: { type: fileType, payload: { is_reusable: true } } }));
-      form.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
-      const uploadRes = await axiosContact.post(uploadUrl, form, { headers: form.getHeaders() });
-      const attachmentId = uploadRes.data.attachment_id;
+      console.log('Cloudinaryアップロード開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
+
+      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      console.log('Cloudinaryアップロード完了:', attachmentUrl);
+
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-      await axiosContact.post(msgUrl, {
+      const msgRes = await axiosContact.post(msgUrl, {
         recipient: { id: senderId },
-        message: { attachment: { type: fileType, payload: { attachment_id: attachmentId } } },
+        message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
         messaging_type: 'RESPONSE'
       });
+      if (msgRes.data && msgRes.data.error) {
+        console.error('添付送信エラー:', msgRes.data.error);
+        return res.json({ success: false, error: msgRes.data.error.message });
+      }
     }
 
     // contactsから名前取得
@@ -382,6 +414,7 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
       status: '対応済み',
       isAdminSent: true,
       attachmentName,
+      attachmentUrl,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
