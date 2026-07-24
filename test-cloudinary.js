@@ -1,10 +1,10 @@
-// Cloudinaryへの直接アップロードをテストするスクリプト
+// Cloudinaryへの直接アップロードをテストするスクリプト（実際に失敗しているファイルで検証）
 // 使い方:
-//   1. このファイルを C:\webhook-server\test-cloudinary.js として保存
-//   2. 同じフォルダに test.png という小さい画像ファイルを置く
+//   1. このファイルを C:\webhook-server\test-cloudinary.js として上書き保存
+//   2. 問題のファイル「Screenshot_20260722-170508.png」を C:\webhook-server フォルダにコピー
 //   3. 下の api_key と api_secret を、現在Railwayに設定している値に書き換える
 //   4. ターミナルで実行: node test-cloudinary.js
-//   5. テストが終わったらこのファイルと test.png は削除してOK（本番コードとは無関係）
+//   5. テストが終わったらこのファイルと画像ファイルは削除してOK（本番コードとは無関係）
 
 const cloudinary = require('cloudinary').v2;
 
@@ -14,7 +14,7 @@ cloudinary.config({
   api_secret: '6SEaSzrTo_Jp4zNz2giVMUmDRls'
 });
 
-cloudinary.uploader.upload('./test.png', { resource_type: 'auto' })
+cloudinary.uploader.upload('./Screenshot_20260722-170508.png', { resource_type: 'auto' })
   .then(result => {
     console.log('成功:', result.secure_url);
   })

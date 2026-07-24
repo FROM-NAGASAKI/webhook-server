@@ -5,6 +5,7 @@ const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = require('../helpers/html');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const sharp = require('sharp');
 
 // Cloudinary設定（Railway環境変数から取得）
 const cloudinary = require('cloudinary').v2;
@@ -14,13 +15,33 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// スマホ由来の非標準な画像ファイル（壊れたPNG等）をCloudinaryが拒否することがあるため、
+// 画像の場合は一度sharpで標準的な形式に再エンコードしてからアップロードする
+async function normalizeImageBuffer(buffer, mimetype) {
+  if (!mimetype || !mimetype.startsWith('image/')) return buffer; // 画像以外はそのまま
+  try {
+    if (mimetype === 'image/png') {
+      return await sharp(buffer).png().toBuffer();
+    }
+    if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
+      return await sharp(buffer).jpeg().toBuffer();
+    }
+    // その他の画像形式は汎用的にJPEGへ変換
+    return await sharp(buffer).jpeg().toBuffer();
+  } catch (e) {
+    console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
+    return buffer; // 失敗しても元のバッファでアップロードを試みる
+  }
+}
+
 // バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
-function uploadToCloudinary(buffer, originalname, mimetype) {
+async function uploadToCloudinary(buffer, originalname, mimetype) {
+  const normalizedBuffer = await normalizeImageBuffer(buffer, mimetype);
+  console.log('uploadToCloudinary詳細: size=' + normalizedBuffer.length + ' bytes (元: ' + buffer.length + ' bytes), mimetype=' + mimetype + ', name=' + originalname);
   return new Promise((resolve, reject) => {
-    console.log('uploadToCloudinary詳細: size=' + buffer.length + ' bytes, mimetype=' + mimetype + ', name=' + originalname);
     const stream = cloudinary.uploader.upload_stream(
       {
-        resource_type: 'auto' // 画像・PDF・Word・Excelなどをまとめて扱う。folder/filenameオプションは切り分けのため一旦外す
+        resource_type: 'auto' // 画像・PDF・Word・Excelなどをまとめて扱う
       },
       (error, result) => {
         if (error) {
@@ -30,7 +51,7 @@ function uploadToCloudinary(buffer, originalname, mimetype) {
         resolve(result.secure_url);
       }
     );
-    stream.end(buffer);
+    stream.end(normalizedBuffer);
   });
 }
 
