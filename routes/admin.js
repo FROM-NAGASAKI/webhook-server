@@ -7,8 +7,54 @@ const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const sharp = require('sharp');
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const PAGE_SIZE = 50;
+
+// Cloudinary設定（Railway環境変数から取得）
+const cloudinary = require('cloudinary').v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// スマホ由来の非標準な画像ファイル（壊れたPNG等）をCloudinaryが拒否することがあるため、
+// 画像の場合は一度sharpで標準的な形式に再エンコードしてからアップロードする
+async function normalizeImageBuffer(buffer, mimetype) {
+  if (!mimetype || !mimetype.startsWith('image/')) return buffer; // 画像以外はそのまま
+  try {
+    if (mimetype === 'image/png') {
+      return await sharp(buffer, { failOn: 'none' }).png().toBuffer();
+    }
+    if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
+      return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
+    }
+    return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
+  } catch (e) {
+    console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
+    return buffer;
+  }
+}
+
+// バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
+async function uploadToCloudinary(buffer, originalname, mimetype) {
+  const normalizedBuffer = await normalizeImageBuffer(buffer, mimetype);
+  console.log('uploadToCloudinary詳細: size=' + normalizedBuffer.length + ' bytes (元: ' + buffer.length + ' bytes), mimetype=' + mimetype + ', name=' + originalname);
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { resource_type: 'auto' },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinaryエラー詳細:', JSON.stringify(error));
+          return reject(error);
+        }
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(normalizedBuffer);
+  });
+}
 
 // 新着メッセージAPI
 router.get('/messages/new', requireAuth, async (req, res) => {
@@ -343,18 +389,21 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       const fileType = getAttachmentType(req.file.mimetype);
       attachmentName = req.file.originalname;
       attachmentType = fileType;
-      const url = 'https://graph.facebook.com/v19.0/me/message_attachments?access_token=' + PAGE_ACCESS_TOKEN;
-      const form = new FormData();
-      form.append('message', JSON.stringify({ attachment: { type: fileType, payload: { is_reusable: true } } }));
-      form.append('filedata', req.file.buffer, { filename: req.file.originalname, contentType: req.file.mimetype });
-      const uploadRes = await axios.post(url, form, { headers: form.getHeaders() });
-      const attachmentId = uploadRes.data.attachment_id;
+
+      // Cloudinaryにアップロードして公開URLを取得し、そのURLをMessengerに渡す
+      // （/me/message_attachments は権限不足のため使用しない）
+      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
       const msgRes = await axios.post(msgUrl, {
         recipient: { id: senderId },
-        message: { attachment: { type: fileType, payload: { attachment_id: attachmentId } } }
+        message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
+        messaging_type: 'RESPONSE'
       });
-      attachmentUrl = msgRes.data.attachment_url || null;
+      if (msgRes.data && msgRes.data.error) {
+        console.error('添付送信エラー:', msgRes.data.error);
+        return res.json({ success: false, error: msgRes.data.error.message });
+      }
     }
 
     // 署名をセッションから取得（なければFirestoreから取得）
