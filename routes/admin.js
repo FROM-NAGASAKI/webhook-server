@@ -143,10 +143,13 @@ router.get('/', requireAuth, async (req, res) => {
     const profile = profileMap[sid] || {};
     const fbName = d.senderName || '不明';
     const registeredName = profile.passportName || '';
-    const registeredNameLabel = registeredName
-      ? '登録名：' + registeredName
+    // 登録名があれば登録名を主表示にし、FB名は補足として小さく出す。
+    // 登録名が無ければFB名（または候補があればその旨）を主表示にする。
+    const primaryName = registeredName || fbName;
+    const secondaryLabel = registeredName
+      ? 'FBアカウント名：' + fbName
       : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
-    const displayName = registeredName || fbName; // 検索用・並び替え用に使う代表名
+    const displayName = primaryName; // 検索用・並び替え用に使う代表名
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
     const replyHtml = (d.replyMessage || d.attachmentName)
@@ -200,9 +203,10 @@ router.get('/', requireAuth, async (req, res) => {
 
     return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
       + '<td data-label="受信日時">' + date + '</td>'
-      + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
-      + '<div><div style="font-weight:bold;">' + fbName + unreadBadge + countBadge + '</div>'
-      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + registeredNameLabel + '</div></div>'
+      + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(primaryName, d.senderPicture)
+      + '<div><div style="font-weight:bold;">' + primaryName + unreadBadge + countBadge + '</div>'
+      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + secondaryLabel + '</div>'
+      + '<div style="font-size:11px;color:#aaa;margin-top:1px;">ID: ' + sid + '</div></div>'
       + '</a></td>'
       + '<td data-label="所属事業所">' + (profile.workplace || '—') + '</td>'
       + '<td data-label="在留資格">' + (profile.residenceStatus || '—') + '</td>'

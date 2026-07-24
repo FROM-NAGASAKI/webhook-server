@@ -79,13 +79,15 @@ router.get('/', requireAuth, async (req, res) => {
     const profile = profileMap[u.senderId] || {};
     const fbName = u.senderName || '不明';
     const registeredName = profile.passportName || '';
-    const registeredNameLabel = registeredName
-      ? '登録名：' + registeredName
+    const primaryName = registeredName || fbName;
+    const secondaryLabel = registeredName
+      ? 'FBアカウント名：' + fbName
       : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
     return '<tr onclick="location.href=\'/admin/contacts/' + u.senderId + '\'" style="cursor:pointer;">'
-      + '<td><div style="display:flex;align-items:flex-start;">' + avatarHtml(fbName, u.senderPicture)
-      + '<div><div><strong>' + fbName + '</strong>' + unreadBadge + '</div>'
-      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + registeredNameLabel + '</div></div>'
+      + '<td><div style="display:flex;align-items:flex-start;">' + avatarHtml(primaryName, u.senderPicture)
+      + '<div><div><strong>' + primaryName + '</strong>' + unreadBadge + '</div>'
+      + '<div style="font-size:12px;color:#888;margin-top:2px;">' + secondaryLabel + '</div>'
+      + '<div style="font-size:11px;color:#aaa;margin-top:1px;">ID: ' + u.senderId + '</div></div>'
       + '</div></td>'
       + '<td>' + (profile.workplace || '—') + '</td><td>' + (profile.residenceStatus || '—') + '</td>'
       + '<td>' + u.lastMessage + '</td><td>' + lastDate + '</td><td>' + u.count + '</td>'
