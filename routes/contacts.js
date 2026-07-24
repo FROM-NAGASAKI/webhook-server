@@ -84,20 +84,31 @@ router.get('/', requireAuth, async (req, res) => {
       ? 'FBアカウント名：' + fbName
       : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
     return '<tr onclick="location.href=\'/admin/contacts/' + u.senderId + '\'" style="cursor:pointer;">'
-      + '<td><div style="display:flex;align-items:flex-start;">' + avatarHtml(primaryName, u.senderPicture)
+      + '<td data-label="名前"><div style="display:flex;align-items:flex-start;">' + avatarHtml(primaryName, u.senderPicture)
       + '<div><div><strong>' + primaryName + '</strong>' + unreadBadge + '</div>'
       + '<div style="font-size:12px;color:#888;margin-top:2px;">' + secondaryLabel + '</div>'
       + '<div style="font-size:11px;color:#aaa;margin-top:1px;">ID: ' + u.senderId + '</div></div>'
       + '</div></td>'
-      + '<td>' + (profile.workplace || '—') + '</td><td>' + (profile.residenceStatus || '—') + '</td>'
-      + '<td>' + u.lastMessage + '</td><td>' + lastDate + '</td><td>' + u.count + '</td>'
+      + '<td data-label="所属事業所">' + (profile.workplace || '—') + '</td><td data-label="在留資格">' + (profile.residenceStatus || '—') + '</td>'
+      + '<td data-label="最新メッセージ">' + u.lastMessage + '</td><td data-label="最終日時">' + lastDate + '</td><td data-label="件数">' + u.count + '</td>'
       + '</tr>';
   }).join('');
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>ユーザー履歴</title>'
     + '<style>' + commonCss() + ' table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}'
-    + 'th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:14px 16px;border-bottom:1px solid #eee;} tr:hover td{background:#f0f7ff;}</style>'
+    + 'th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;} td{padding:14px 16px;border-bottom:1px solid #eee;} tr:hover td{background:#f0f7ff;}'
+    + '@media (max-width:768px){'
+    + '.container{padding:8px;}'
+    + 'table,thead,tbody{display:block;width:100%;}'
+    + 'thead{display:none;}'
+    + 'tr{display:block;background:white;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.12);margin-bottom:10px;padding:10px 14px;}'
+    + 'tr td{display:block;padding:6px 0;border-bottom:1px solid #f0f0f0;}'
+    + 'tr td:last-child{border-bottom:none;}'
+    + 'tr td[data-label]:before{content:attr(data-label);display:block;font-size:11px;font-weight:bold;color:#999;margin-bottom:2px;}'
+    + 'tr td[data-label="名前"]:before{display:none;}'
+    + '}'
+    + '</style>'
     + '</head><body><header><h1>👥 ユーザー履歴</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container"><table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>'
     + '<tbody>' + rows + '</tbody></table></div></body></html>');
@@ -130,7 +141,7 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     if (d.isAdminSent) {
       const replyText = d.replyMessage || '';
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : date;
-      return '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><div style="max-width:60%;">'
+      return '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><div class="chat-bubble" style="max-width:60%;">'
         + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
         + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
         + '<div style="white-space:pre-wrap;">' + replyText + '</div>'
@@ -140,7 +151,7 @@ router.get('/:senderId', requireAuth, async (req, res) => {
 
     let html = '<div style="display:flex;justify-content:flex-start;margin-bottom:8px;gap:8px;">'
       + avatarHtml(senderName, senderPicture)
-      + '<div style="max-width:60%;">'
+      + '<div class="chat-bubble" style="max-width:60%;">'
       + '<div style="font-size:12px;color:#888;margin-bottom:4px;">' + senderName + ' · ' + date + '</div>'
       + '<div id="msg-' + msgId + '" style="background:white;border-radius:0 12px 12px 12px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">' + (d.message || '') + attachmentHtml(d) + '</div>'
       + '<div style="margin-top:4px;">'
@@ -154,7 +165,7 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     if (d.replyAdmin && (d.replyMessage || d.attachmentName)) {
       const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
       const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
-      html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div style="max-width:60%;">'
+      html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div class="chat-bubble" style="max-width:60%;">'
         + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
         + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
         + replyText + attachmentHtml(d)
@@ -311,6 +322,15 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + 'input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}'
     + 'textarea.profile-textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;resize:vertical;}'
     + 'button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}'
+    + '.compose-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}'
+    + '@media (max-width:768px){'
+    + '.container{padding:8px;}'
+    + '.card{padding:14px 16px;}'
+    + '.user-info{gap:12px;}'
+    + '.profile-grid{grid-template-columns:1fr;max-width:none;}'
+    + '.compose-grid{grid-template-columns:1fr;}'
+    + '.chat-bubble{max-width:85%!important;}'
+    + '}'
     + '</style></head><body>'
     + '<header><h1>💬 ' + senderName + ' の履歴</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container">'
@@ -328,7 +348,7 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '<div class="card" style="border:2px solid #2980b9;">'
     + '<h3 style="margin-top:0;color:#2980b9;">✉️ 新規メッセージ送信</h3>'
     + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため24時間以上経過していても送信可能です。</p>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">'
+    + '<div class="compose-grid">'
     + '<div>'
     + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
     + '<textarea id="newMsgJa" rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;resize:vertical;" placeholder="送信するメッセージを入力..."></textarea>'
