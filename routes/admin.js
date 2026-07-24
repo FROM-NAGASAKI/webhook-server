@@ -95,7 +95,9 @@ router.get('/', requireAuth, async (req, res) => {
     const d = t.latestData;
     const sid = t.senderId;
     const profile = profileMap[sid] || {};
-    const displayName = profile.passportName || d.senderName || '不明';
+    const fbName = d.senderName || '不明';
+    const registeredName = profile.passportName || '';
+    const displayName = registeredName || fbName; // 検索用・並び替え用に使う代表名
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
     const replyHtml = (d.replyMessage || d.attachmentName)
@@ -149,9 +151,12 @@ router.get('/', requireAuth, async (req, res) => {
         + '</td></tr>'
       : '';
 
-    return '<tr class="msg-row" data-search="' + displayName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + (replyDocId || '') + '">'
+    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + (replyDocId || '') + '">'
       + '<td>' + date + '</td>'
-      + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">' + avatarHtml(displayName, d.senderPicture) + displayName + '</a>' + unreadBadge + countBadge + '</td>'
+      + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(fbName, d.senderPicture)
+      + '<div><div style="font-weight:bold;">' + fbName + unreadBadge + countBadge + '</div>'
+      + '<div style="font-size:12px;color:#888;margin-top:2px;">登録名：' + (registeredName || '未登録') + '</div></div>'
+      + '</a></td>'
       + '<td>' + (profile.workplace || '—') + '</td>'
       + '<td>' + (profile.residenceStatus || '—') + '</td>'
       + '<td>' + (d.message || '—') + '</td>'
