@@ -43,21 +43,45 @@ router.get('/messages/new', requireAuth, async (req, res) => {
   } catch (err) { res.json({ messages: [], error: err.message }); }
 });
 
-// 問い合わせ一覧
+// 問い合わせ一覧（登録者ごとにスレッド化。最新メッセージがある登録者が上に来る）
 router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const page = parseInt(req.query.page) || 1;
   const offset = (page - 1) * PAGE_SIZE;
 
-  // 全件取得（ページネーション用）
+  // 全メッセージを新しい順で取得し、送信者ごとにグループ化する
+  // Map を使うことで、送信者ID（数字の文字列）でも挿入順（＝時系列の新しい順）が保たれる
   const allSnapshot = await db.collection('messages').orderBy('createdAt', 'desc').get();
-  const totalCount = allSnapshot.size;
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+  const threadsMap = new Map();
 
-  // 対象ページのドキュメント
-  const pageDocs = allSnapshot.docs.slice(offset, offset + PAGE_SIZE);
+  allSnapshot.docs.forEach(doc => {
+    const d = doc.data();
+    const sid = d.senderId;
+    if (!sid) return;
+    if (!threadsMap.has(sid)) {
+      threadsMap.set(sid, {
+        senderId: sid,
+        latestDoc: doc,       // 新しい順で最初に出てくるので、その送信者の最新メッセージになる
+        latestData: d,
+        count: 0,
+        unreadCount: 0,
+        replyTargetDoc: null  // 未対応の中で一番新しいメッセージ（返信対象）
+      });
+    }
+    const t = threadsMap.get(sid);
+    t.count++;
+    if (d.status === '未対応') {
+      t.unreadCount++;
+      if (!t.replyTargetDoc) t.replyTargetDoc = doc;
+    }
+  });
 
-  const senderIds = [...new Set(pageDocs.map(d => d.data().senderId).filter(Boolean))];
+  const threads = Array.from(threadsMap.values()); // すでに最新順
+  const totalCount = threads.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const pageThreads = threads.slice(offset, offset + PAGE_SIZE);
+
+  const senderIds = pageThreads.map(t => t.senderId);
   const profileMap = {};
   await Promise.all(senderIds.map(async sid => {
     const doc = await db.collection('contacts').doc(sid).get();
@@ -67,9 +91,10 @@ router.get('/', requireAuth, async (req, res) => {
   const latestISO = allSnapshot.size > 0 && allSnapshot.docs[0].data().createdAt
     ? allSnapshot.docs[0].data().createdAt.toDate().toISOString() : '';
 
-  const rows = pageDocs.map(doc => {
-    const d = doc.data();
-    const profile = profileMap[d.senderId] || {};
+  const rows = pageThreads.map(t => {
+    const d = t.latestData;
+    const sid = t.senderId;
+    const profile = profileMap[sid] || {};
     const displayName = profile.passportName || d.senderName || '不明';
     const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
     const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
@@ -77,48 +102,56 @@ router.get('/', requireAuth, async (req, res) => {
       ? (d.replyMessage || '') + (d.attachmentName ? '<br><small>📎 ' + d.attachmentName + '</small>' : '')
       : '—';
 
-    const replyBtn = d.status === '未対応'
-      ? '<button onclick="openReply(\'' + doc.id + '\')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>'
+    const unreadBadge = t.unreadCount > 0
+      ? '<span style="background:#e74c3c;color:white;border-radius:12px;padding:1px 7px;font-size:11px;margin-left:6px;">' + t.unreadCount + '</span>'
+      : '';
+    const countBadge = '<span style="color:#999;font-size:12px;margin-left:6px;">(' + t.count + '件)</span>';
+
+    // 返信対象は「未対応の中で一番新しいメッセージ」。無ければ返信ボタンは表示しない
+    const replyDocId = t.replyTargetDoc ? t.replyTargetDoc.id : null;
+
+    const replyBtn = replyDocId
+      ? '<button onclick="openReply(\'' + replyDocId + '\')" style="background:#2980b9;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">返信</button>'
       : '';
 
-    const replyForm = d.status === '未対応'
-      ? '<tr id="reply-' + doc.id + '" style="display:none;background:#f0f7ff;">'
+    const replyForm = replyDocId
+      ? '<tr id="reply-' + replyDocId + '" style="display:none;background:#f0f7ff;">'
         + '<td colspan="9" style="padding:12px;">'
         + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
         + '<div>'
         + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
-        + '<textarea id="text-' + doc.id + '" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>'
-        + '<br><button onclick="translateAdminReply(\'' + doc.id + '\')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
+        + '<textarea id="text-' + replyDocId + '" rows="3" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;" placeholder="返信メッセージを入力（任意）..."></textarea>'
+        + '<br><button onclick="translateAdminReply(\'' + replyDocId + '\')" style="margin-top:4px;font-size:12px;padding:4px 10px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 英訳する</button>'
         + '</div>'
         + '<div>'
         + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🌐 英語訳（自動）</label>'
-        + '<textarea id="translated-' + doc.id + '" rows="3" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;box-sizing:border-box;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
+        + '<textarea id="translated-' + replyDocId + '" rows="3" style="width:100%;padding:8px;border:1px solid #27ae60;border-radius:4px;font-size:14px;box-sizing:border-box;background:#f9fff9;" placeholder="英訳がここに表示されます..."></textarea>'
         + '<div style="margin-top:4px;font-size:11px;color:#888;">※ 編集して送信も可能です</div>'
         + '</div>'
         + '</div>'
         + '<div style="margin-bottom:8px;">'
         + '<label style="font-size:12px;color:#555;font-weight:bold;">送信言語：</label>'
-        + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-' + doc.id + '" value="ja" checked> 日本語</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + doc.id + '" value="en"> 英語訳</label>'
-        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + doc.id + '" value="both"> 両方送信</label>'
+        + '<label style="font-size:13px;margin-left:8px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="ja" checked> 日本語</label>'
+        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="en"> 英語訳</label>'
+        + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + replyDocId + '" value="both"> 両方送信</label>'
         + '</div>'
         + '<div style="margin-bottom:8px;">'
         + '<label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
-        + '<input type="file" id="file-' + doc.id + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
+        + '<input type="file" id="file-' + replyDocId + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
         + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
         + '</div>'
         + '<small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>'
         + '<div style="margin-top:10px;">'
-        + '<button onclick="sendReply(\'' + doc.id + '\',\'' + d.senderId + '\')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>'
-        + '<button onclick="closeReply(\'' + doc.id + '\')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>'
-        + '<span id="result-' + doc.id + '" style="margin-left:12px;font-weight:bold;"></span>'
+        + '<button onclick="sendReply(\'' + replyDocId + '\',\'' + sid + '\')" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin-right:8px;">送信</button>'
+        + '<button onclick="closeReply(\'' + replyDocId + '\')" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">キャンセル</button>'
+        + '<span id="result-' + replyDocId + '" style="margin-left:12px;font-weight:bold;"></span>'
         + '</div>'
         + '</td></tr>'
       : '';
 
-    return '<tr class="msg-row" data-search="' + displayName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + doc.id + '">'
+    return '<tr class="msg-row" data-search="' + displayName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + (replyDocId || '') + '">'
       + '<td>' + date + '</td>'
-      + '<td><a href="/admin/contacts/' + d.senderId + '" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">' + avatarHtml(displayName, d.senderPicture) + displayName + '</a></td>'
+      + '<td><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;font-weight:bold;display:flex;align-items:center;">' + avatarHtml(displayName, d.senderPicture) + displayName + '</a>' + unreadBadge + countBadge + '</td>'
       + '<td>' + (profile.workplace || '—') + '</td>'
       + '<td>' + (profile.residenceStatus || '—') + '</td>'
       + '<td>' + (d.message || '—') + '</td>'
@@ -148,7 +181,7 @@ router.get('/', requireAuth, async (req, res) => {
   }
   paginationHtml += '</div>';
   paginationHtml += '<div style="text-align:center;margin-top:8px;font-size:13px;color:#888;">'
-    + '全 ' + totalCount + ' 件中 ' + (offset+1) + '〜' + Math.min(offset+PAGE_SIZE, totalCount) + ' 件表示'
+    + '全 ' + totalCount + ' 名中 ' + (totalCount === 0 ? 0 : offset+1) + '〜' + Math.min(offset+PAGE_SIZE, totalCount) + ' 名表示'
     + '（' + page + ' / ' + totalPages + ' ページ）</div>';
 
   const script = `
@@ -163,7 +196,7 @@ function filterRows() {
   rows.forEach(function(row) {
     var search = (row.dataset.search || '').toLowerCase();
     var docId = row.dataset.docid;
-    var replyRow = document.getElementById('reply-' + docId);
+    var replyRow = docId ? document.getElementById('reply-' + docId) : null;
     var statusCell = row.querySelector('td:nth-child(8)');
     var rowStatus = statusCell ? statusCell.textContent.trim() : '';
     var show = (!kw || search.includes(kw)) && (!status || rowStatus === status);
@@ -171,7 +204,7 @@ function filterRows() {
     if (replyRow) replyRow.style.display = 'none';
     if (show) count++;
   });
-  document.getElementById('searchCount').textContent = '全 ' + count + ' 件';
+  document.getElementById('searchCount').textContent = count + ' 名';
 }
 
 function clearSearch() {
@@ -274,7 +307,7 @@ setInterval(checkNewMessages, 60000);
     + '<input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">'
     + '<select id="statusFilter" onchange="filterRows()"><option value="">すべてのステータス</option><option value="未対応">未対応</option><option value="対応済み">対応済み</option></select>'
     + '<button class="btn-clear" onclick="clearSearch()">× クリア</button>'
-    + '<span class="search-count" id="searchCount">' + pageDocs.length + ' 件</span>'
+    + '<span class="search-count" id="searchCount">' + pageThreads.length + ' 名</span>'
     + '</div>'
     + '<table><thead><tr>'
     + '<th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>'
