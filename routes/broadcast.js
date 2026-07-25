@@ -2,58 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { avatarHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
+const { uploadToCloudinary } = require('../helpers/cloudinary');
 const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const sharp = require('sharp');
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-
-// Cloudinary設定（Railway環境変数から取得）
-const cloudinary = require('cloudinary').v2;
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-// スマホ由来の非標準な画像ファイル（壊れたPNG等）をCloudinaryが拒否することがあるため、
-// 画像の場合は一度sharpで標準的な形式に再エンコードしてからアップロードする
-async function normalizeImageBuffer(buffer, mimetype) {
-  if (!mimetype || !mimetype.startsWith('image/')) return buffer;
-  try {
-    if (mimetype === 'image/png') {
-      return await sharp(buffer, { failOn: 'none' }).png().toBuffer();
-    }
-    if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
-      return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-    }
-    return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-  } catch (e) {
-    console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
-    return buffer;
-  }
-}
-
-// バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
-async function uploadToCloudinary(buffer, originalname, mimetype) {
-  const normalizedBuffer = await normalizeImageBuffer(buffer, mimetype);
-  console.log('uploadToCloudinary詳細: size=' + normalizedBuffer.length + ' bytes (元: ' + buffer.length + ' bytes), mimetype=' + mimetype + ', name=' + originalname);
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { resource_type: 'auto' },
-      (error, result) => {
-        if (error) {
-          console.error('Cloudinaryエラー詳細:', JSON.stringify(error));
-          return reject(error);
-        }
-        resolve(result.secure_url);
-      }
-    );
-    stream.end(normalizedBuffer);
-  });
-}
 
 // グループ送信ページ
 router.get('/', requireAuth, async (req, res) => {
@@ -148,6 +103,7 @@ router.get('/', requireAuth, async (req, res) => {
     + '.result-item{padding:8px 12px;border-radius:4px;margin-bottom:6px;font-size:14px;}'
     + '.result-ok{background:#d5f5e3;color:#1e8449;}'
     + '.result-ng{background:#fadbd8;color:#922b21;}'
+    + '.result-warn{background:#fdebd0;color:#9c640c;}'
     + '@media (max-width:768px){'
     + '.container{padding:8px;}'
     + '.msg-box{padding:14px 16px;}'
@@ -267,7 +223,10 @@ router.get('/', requireAuth, async (req, res) => {
     + 'var data=await res.json();'
     + 'var row=document.querySelector("input[value=\'"+senderId+"\']").closest("tr");'
     + 'var name=row.querySelector("strong").textContent;'
-    + 'if(data.success){'
+    + 'if(data.success&&data.warning){'
+    + 'successCount++;'
+    + 'resultArea.innerHTML+="<div class=\'result-item result-warn\'>⚠️ "+name+" - "+data.warning+"</div>";'
+    + '}else if(data.success){'
     + 'successCount++;'
     + 'resultArea.innerHTML+="<div class=\'result-item result-ok\'>✅ "+name+" - 送信成功</div>";'
     + '}else{'
@@ -293,6 +252,15 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
   const admin = req.app.get('adminSdk');
   const { senderId, message } = req.body;
 
+  let textSendFailed = false;
+  let textSendError = null;
+  let attachmentSendFailed = false;
+  let attachmentSendError = null;
+  let attachmentName = null;
+  let attachmentUrl = null;
+  let attachmentPublicId = null;
+  let attachmentResourceType = null;
+
   try {
     // 署名取得
     let signature = req.session.adminSignature || '';
@@ -308,67 +276,102 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
 
     // テキスト送信（通常送信）
     if (sendText.trim()) {
-      const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipient: { id: senderId },
-          message: { text: sendText },
-          messaging_type: 'RESPONSE'
-        })
-      });
-      const data = await response.json();
-      if (data.error) {
-        console.error('グループ送信エラー:', senderId, data.error.message);
-        return res.json({ success: false, error: data.error.message });
+      try {
+        const url = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipient: { id: senderId },
+            message: { text: sendText },
+            messaging_type: 'RESPONSE'
+          })
+        });
+        const data = await response.json();
+        if (data.error) {
+          textSendFailed = true;
+          textSendError = data.error.message;
+        }
+      } catch (textErr) {
+        textSendFailed = true;
+        textSendError = textErr.message;
       }
     }
 
+    // テキストが失敗した場合、何も相手に届いていないので、ここで打ち切って記録もしない
+    if (textSendFailed) {
+      console.error('グループ送信エラー（本文）:', senderId, textSendError);
+      return res.json({ success: false, error: textSendError });
+    }
+
     // ファイル添付送信（Cloudinaryにアップロードして公開URLをMessengerに渡す）
-    let attachmentName = null;
-    let attachmentUrl = null;
+    // 注意：本文はすでに相手に届いているため、ここで失敗しても処理を打ち切らない。
+    // 添付失敗の情報を保持したまま、必ずFirestoreへの記録まで進める。
     if (req.file) {
-      const { getAttachmentType } = require('../helpers/facebook');
-      const fileType = getAttachmentType(req.file.mimetype);
-      attachmentName = req.file.originalname;
-      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
-      const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
       try {
+        const { getAttachmentType } = require('../helpers/facebook');
+        const fileType = getAttachmentType(req.file.mimetype);
+        attachmentName = req.file.originalname;
+        const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+        attachmentUrl = uploaded.url;
+        attachmentPublicId = uploaded.publicId;
+        attachmentResourceType = uploaded.resourceType;
+        const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
         const msgRes = await axios.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
           messaging_type: 'RESPONSE'
         });
         if (msgRes.data && msgRes.data.error) {
-          console.error('グループ送信の添付エラー(200応答内):', senderId, JSON.stringify(msgRes.data.error));
-          return res.json({ success: false, error: msgRes.data.error.message });
+          attachmentSendFailed = true;
+          attachmentSendError = msgRes.data.error.message;
         }
       } catch (attachErr) {
         const fbError = attachErr.response && attachErr.response.data && attachErr.response.data.error;
-        console.error('グループ送信の添付エラー詳細:', senderId, fbError ? JSON.stringify(fbError) : attachErr.message);
-        return res.json({ success: false, error: fbError ? fbError.message : attachErr.message });
+        attachmentSendFailed = true;
+        attachmentSendError = fbError ? fbError.message : attachErr.message;
+      }
+      if (attachmentSendFailed) {
+        console.error('グループ送信の添付エラー:', senderId, attachmentSendError);
+        // 添付が届かなかった記録として、URLとpublicIdは保存しない（存在しないものとして扱う）
+        attachmentUrl = null;
+        attachmentPublicId = null;
       }
     }
 
-    // Firestoreに記録
+    // Firestoreに記録（本文が届いた時点で必ず記録する。添付が失敗していてもここまで到達する）
     // isAdminSent:true を付けることで、contacts.js の個別送信と同じ形式で
     // 会話タイムライン上に「管理者からの返信」として正しく表示されるようにする
+    // hasAttachment/attachmentDeleted/attachmentPublicId/attachmentResourceType は
+    // 60日後の自動削除ジョブ（helpers/cleanup.js）が参照するために保存する
     const contactDoc = await db.collection('contacts').doc(senderId).get();
     const profile = contactDoc.exists ? contactDoc.data() : {};
     const senderName = profile.passportName || '不明';
+    const attachmentTag = req.file
+      ? (attachmentSendFailed ? ' [添付失敗: ' + attachmentName + ']' : ' [添付: ' + attachmentName + ']')
+      : '';
     await db.collection('messages').add({
       senderId, senderName, senderPicture: null,
-      message: '[グループ送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
+      message: '[グループ送信] ' + (message || '') + attachmentTag,
       replyMessage: sendText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: '対応済み',
       isAdminSent: true,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      attachmentName,
-      attachmentUrl
+      attachmentName: attachmentSendFailed ? null : attachmentName,
+      attachmentUrl,
+      attachmentPublicId,
+      attachmentResourceType,
+      hasAttachment: !attachmentSendFailed && !!attachmentPublicId,
+      attachmentDeleted: false
     });
+
+    if (attachmentSendFailed) {
+      console.log('グループ送信（本文のみ成功、添付失敗）:', senderId, senderName);
+      // 本文は届いているので success:true としつつ、添付の問題をwarningとして伝える
+      return res.json({ success: true, warning: '本文は届きましたが、添付ファイルの送信に失敗しました: ' + attachmentSendError });
+    }
 
     console.log('グループ送信成功:', senderId, senderName);
     res.json({ success: true });

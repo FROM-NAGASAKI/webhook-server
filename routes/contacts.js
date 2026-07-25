@@ -3,58 +3,9 @@ const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = require('../helpers/html');
+const { uploadToCloudinary } = require('../helpers/cloudinary');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const sharp = require('sharp');
-
-// Cloudinary設定（Railway環境変数から取得）
-const cloudinary = require('cloudinary').v2;
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-// スマホ由来の非標準な画像ファイル（壊れたPNG等）をCloudinaryが拒否することがあるため、
-// 画像の場合は一度sharpで標準的な形式に再エンコードしてからアップロードする
-async function normalizeImageBuffer(buffer, mimetype) {
-  if (!mimetype || !mimetype.startsWith('image/')) return buffer; // 画像以外はそのまま
-  try {
-    // failOn:'none' で軽微な破損（不完全なチャンク等）があっても可能な限り読み込む
-    if (mimetype === 'image/png') {
-      return await sharp(buffer, { failOn: 'none' }).png().toBuffer();
-    }
-    if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
-      return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-    }
-    // その他の画像形式は汎用的にJPEGへ変換
-    return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-  } catch (e) {
-    console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
-    return buffer; // 失敗しても元のバッファでアップロードを試みる
-  }
-}
-
-// バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
-async function uploadToCloudinary(buffer, originalname, mimetype) {
-  const normalizedBuffer = await normalizeImageBuffer(buffer, mimetype);
-  console.log('uploadToCloudinary詳細: size=' + normalizedBuffer.length + ' bytes (元: ' + buffer.length + ' bytes), mimetype=' + mimetype + ', name=' + originalname);
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: 'auto' // 画像・PDF・Word・Excelなどをまとめて扱う
-      },
-      (error, result) => {
-        if (error) {
-          console.error('Cloudinaryエラー詳細:', JSON.stringify(error));
-          return reject(error);
-        }
-        resolve(result.secure_url);
-      }
-    );
-    stream.end(normalizedBuffer);
-  });
-}
 
 // ユーザー一覧
 router.get('/', requireAuth, async (req, res) => {
@@ -432,12 +383,17 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
     // /me/message_attachments を使わないため権限不足エラー(#100 2018047)を回避できる
     let attachmentName = null;
     let attachmentUrl = null;
+    let attachmentPublicId = null;
+    let attachmentResourceType = null;
     if (req.file) {
       const fileType = getAttachmentType(req.file.mimetype);
       attachmentName = req.file.originalname;
       console.log('Cloudinaryアップロード開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
 
-      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      attachmentUrl = uploaded.url;
+      attachmentPublicId = uploaded.publicId;
+      attachmentResourceType = uploaded.resourceType;
       console.log('Cloudinaryアップロード完了:', attachmentUrl);
 
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
@@ -458,6 +414,8 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
     const senderName = profile.passportName || '不明';
 
     // 管理者からの送信を記録（受信メッセージとして残さず、対応済みとして記録）
+    // hasAttachment/attachmentDeleted/attachmentPublicId/attachmentResourceType は
+    // 60日後の自動削除ジョブ（helpers/cleanup.js）が参照するために保存する
     await db.collection('messages').add({
       senderId,
       senderName,
@@ -470,6 +428,10 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
       isAdminSent: true,
       attachmentName,
       attachmentUrl,
+      attachmentPublicId,
+      attachmentResourceType,
+      hasAttachment: !!attachmentPublicId,
+      attachmentDeleted: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 

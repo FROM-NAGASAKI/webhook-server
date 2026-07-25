@@ -6,55 +6,10 @@ const FormData = require('form-data');
 const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
+const { uploadToCloudinary } = require('../helpers/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-const sharp = require('sharp');
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const PAGE_SIZE = 50;
-
-// Cloudinary設定（Railway環境変数から取得）
-const cloudinary = require('cloudinary').v2;
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-// スマホ由来の非標準な画像ファイル（壊れたPNG等）をCloudinaryが拒否することがあるため、
-// 画像の場合は一度sharpで標準的な形式に再エンコードしてからアップロードする
-async function normalizeImageBuffer(buffer, mimetype) {
-  if (!mimetype || !mimetype.startsWith('image/')) return buffer; // 画像以外はそのまま
-  try {
-    if (mimetype === 'image/png') {
-      return await sharp(buffer, { failOn: 'none' }).png().toBuffer();
-    }
-    if (mimetype === 'image/jpeg' || mimetype === 'image/jpg') {
-      return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-    }
-    return await sharp(buffer, { failOn: 'none' }).jpeg().toBuffer();
-  } catch (e) {
-    console.error('画像の再エンコードに失敗、元のバッファのまま続行:', e.message);
-    return buffer;
-  }
-}
-
-// バッファをCloudinaryにアップロードし、公開URLを返すヘルパー
-async function uploadToCloudinary(buffer, originalname, mimetype) {
-  const normalizedBuffer = await normalizeImageBuffer(buffer, mimetype);
-  console.log('uploadToCloudinary詳細: size=' + normalizedBuffer.length + ' bytes (元: ' + buffer.length + ' bytes), mimetype=' + mimetype + ', name=' + originalname);
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { resource_type: 'auto' },
-      (error, result) => {
-        if (error) {
-          console.error('Cloudinaryエラー詳細:', JSON.stringify(error));
-          return reject(error);
-        }
-        resolve(result.secure_url);
-      }
-    );
-    stream.end(normalizedBuffer);
-  });
-}
 
 // 新着メッセージAPI
 router.get('/messages/new', requireAuth, async (req, res) => {
@@ -411,6 +366,8 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
     let attachmentName = null;
     let attachmentType = null;
     let attachmentUrl = null;
+    let attachmentPublicId = null;
+    let attachmentResourceType = null;
 
     if (req.file) {
       const fileType = getAttachmentType(req.file.mimetype);
@@ -419,7 +376,10 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
 
       // Cloudinaryにアップロードして公開URLを取得し、そのURLをMessengerに渡す
       // （/me/message_attachments は権限不足のため使用しない）
-      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      attachmentUrl = uploaded.url;
+      attachmentPublicId = uploaded.publicId;
+      attachmentResourceType = uploaded.resourceType;
 
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
       const msgRes = await axios.post(msgUrl, {
@@ -458,13 +418,37 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       replyMessage: replyText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      attachmentName, attachmentType, attachmentUrl
+      attachmentName, attachmentType, attachmentUrl,
+      attachmentPublicId, attachmentResourceType,
+      hasAttachment: !!attachmentPublicId,
+      attachmentDeleted: false
     });
 
     res.json({ success: true });
   } catch (err) {
     console.error('返信エラー:', err.message);
     res.json({ success: false, error: err.message });
+  }
+});
+
+// 添付ファイル自動削除ジョブの手動実行（動作確認用）
+// ブラウザでログイン後に /admin/attachments/cleanup-now を開くと、即座に実行して結果が画面に表示されます
+router.get('/attachments/cleanup-now', requireAuth, async (req, res) => {
+  try {
+    const { cleanupOldAttachments, RETENTION_DAYS } = require('../helpers/cleanup');
+    const db = req.app.get('db');
+    const admin = req.app.get('adminSdk');
+    const result = await cleanupOldAttachments(db, admin);
+    res.send(
+      '<h2>添付ファイル自動削除（手動実行）</h2>'
+      + '<p>保持期間: ' + RETENTION_DAYS + '日</p>'
+      + '<p>削除成功: ' + result.deletedCount + '件</p>'
+      + '<p>失敗: ' + result.errorCount + '件</p>'
+      + '<p>スキップ（まだ期間内 等）: ' + result.skippedCount + '件</p>'
+      + '<p><a href="/admin">一覧に戻る</a></p>'
+    );
+  } catch (err) {
+    res.status(500).send('エラー: ' + err.message);
   }
 });
 
