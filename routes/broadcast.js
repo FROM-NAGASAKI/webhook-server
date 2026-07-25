@@ -118,7 +118,7 @@ router.get('/', requireAuth, async (req, res) => {
       ? '<span class="badge-over24" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h超</span>'
       : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h内</span>';
     return '<tr>'
-      + '<td data-label="選択" style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '" checked></td>'
+      + '<td data-label="選択" style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '"></td>'
       + '<td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">' + avatarHtml(m.name, m.picture) + '<strong>' + m.name + '</strong>' + badge + '</div></td>'
       + '<td data-label="所属事業所">' + (m.workplace || '—') + '</td>'
       + '<td data-label="在留資格">' + (m.residenceStatus || '—') + '</td>'
@@ -209,7 +209,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     + '<div style="margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'
     + '<span style="font-size:14px;color:#555;">対象: <strong>' + filtered.length + '</strong> 名</span>'
-    + '<label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="selectAll" checked onchange="toggleAll(this)"> 全選択/解除</label>'
+    + '<label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"> 全選択/解除</label>'
     + '<button class="send-btn" id="sendBtn" onclick="sendBroadcast()">📢 一括送信</button>'
     + '</div>'
 
@@ -326,10 +326,13 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     // ファイル添付送信（Cloudinaryにアップロードして公開URLをMessengerに渡す）
+    let attachmentName = null;
+    let attachmentUrl = null;
     if (req.file) {
       const { getAttachmentType } = require('../helpers/facebook');
       const fileType = getAttachmentType(req.file.mimetype);
-      const attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+      attachmentName = req.file.originalname;
+      attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
       try {
         const msgRes = await axios.post(msgUrl, {
@@ -349,18 +352,22 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     // Firestoreに記録
+    // isAdminSent:true を付けることで、contacts.js の個別送信と同じ形式で
+    // 会話タイムライン上に「管理者からの返信」として正しく表示されるようにする
     const contactDoc = await db.collection('contacts').doc(senderId).get();
     const profile = contactDoc.exists ? contactDoc.data() : {};
     const senderName = profile.passportName || '不明';
     await db.collection('messages').add({
       senderId, senderName, senderPicture: null,
-      message: '[グループ送信] ' + (message || '') + (req.file ? ' [添付: ' + req.file.originalname + ']' : ''),
+      message: '[グループ送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
       replyMessage: sendText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: '対応済み',
+      isAdminSent: true,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      attachmentName: req.file ? req.file.originalname : null
+      attachmentName,
+      attachmentUrl
     });
 
     console.log('グループ送信成功:', senderId, senderName);
