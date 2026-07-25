@@ -331,14 +331,20 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
       const fileType = getAttachmentType(req.file.mimetype);
       const attachmentUrl = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
       const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-      const msgRes = await axios.post(msgUrl, {
-        recipient: { id: senderId },
-        message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-        messaging_type: 'RESPONSE'
-      });
-      if (msgRes.data && msgRes.data.error) {
-        console.error('グループ送信の添付エラー:', senderId, msgRes.data.error);
-        return res.json({ success: false, error: msgRes.data.error.message });
+      try {
+        const msgRes = await axios.post(msgUrl, {
+          recipient: { id: senderId },
+          message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
+          messaging_type: 'RESPONSE'
+        });
+        if (msgRes.data && msgRes.data.error) {
+          console.error('グループ送信の添付エラー(200応答内):', senderId, JSON.stringify(msgRes.data.error));
+          return res.json({ success: false, error: msgRes.data.error.message });
+        }
+      } catch (attachErr) {
+        const fbError = attachErr.response && attachErr.response.data && attachErr.response.data.error;
+        console.error('グループ送信の添付エラー詳細:', senderId, fbError ? JSON.stringify(fbError) : attachErr.message);
+        return res.json({ success: false, error: fbError ? fbError.message : attachErr.message });
       }
     }
 
@@ -360,8 +366,9 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
     console.log('グループ送信成功:', senderId, senderName);
     res.json({ success: true });
   } catch (err) {
-    console.error('グループ送信例外:', err.message);
-    res.json({ success: false, error: err.message });
+    const fbError = err.response && err.response.data && err.response.data.error;
+    console.error('グループ送信例外:', senderId, fbError ? JSON.stringify(fbError) : err.message);
+    res.json({ success: false, error: fbError ? fbError.message : err.message });
   }
 });
 
