@@ -62,11 +62,13 @@ router.get('/', requireAuth, async (req, res) => {
     if (!threadsMap.has(sid)) {
       threadsMap.set(sid, {
         senderId: sid,
-        latestDoc: doc,       // 新しい順で最初に出てくるので、その送信者の最新メッセージになる
+        latestDoc: doc,          // 全体で一番新しいメッセージ（並び順用。ユーザー/管理者どちらでも）
         latestData: d,
+        latestUserData: null,    // ユーザーから最後に受信したメッセージ
+        latestAdminData: null,   // 管理者が最後に送った返信
         count: 0,
         unreadCount: 0,
-        replyTargetDoc: null  // 未対応の中で一番新しいメッセージ（返信対象）
+        replyTargetDoc: null     // 未対応の中で一番新しいメッセージ（返信対象）
       });
     }
     const t = threadsMap.get(sid);
@@ -74,6 +76,11 @@ router.get('/', requireAuth, async (req, res) => {
     if (d.status === '未対応') {
       t.unreadCount++;
       if (!t.replyTargetDoc) t.replyTargetDoc = doc;
+    }
+    if (d.isAdminSent) {
+      if (!t.latestAdminData) t.latestAdminData = d;
+    } else {
+      if (!t.latestUserData) t.latestUserData = d;
     }
   });
 
@@ -94,9 +101,11 @@ router.get('/', requireAuth, async (req, res) => {
 
   const rows = pageThreads.map(t => {
     const d = t.latestData;
+    const userData = t.latestUserData;   // ユーザーの最新メッセージ（無い場合はnull）
+    const adminData = t.latestAdminData; // 管理者の最新返信（無い場合はnull）
     const sid = t.senderId;
     const profile = profileMap[sid] || {};
-    const fbName = d.senderName || '不明';
+    const fbName = (userData ? userData.senderName : d.senderName) || '不明';
     const registeredName = profile.passportName || '';
     // 登録名があれば登録名を主表示にし、FB名は補足として小さく出す。
     // 登録名が無ければFB名（または候補があればその旨）を主表示にする。
@@ -105,11 +114,19 @@ router.get('/', requireAuth, async (req, res) => {
       ? 'FBアカウント名：' + fbName
       : (profile.nameCandidate ? '登録名：未登録（候補：' + profile.nameCandidate + '）' : '登録名：未登録');
     const displayName = primaryName; // 検索用・並び替え用に使う代表名
-    const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const statusColor = d.status === '未対応' ? '#e74c3c' : '#27ae60';
-    const replyHtml = (d.replyMessage || d.attachmentName)
-      ? (d.replyMessage || '') + (d.attachmentName ? '<br><small>📎 ' + d.attachmentName + '</small>' : '')
+    // 受信日時：ユーザーから最後に受信した日時（無ければ全体の最新日時にフォールバック）
+    const dateSource = userData || d;
+    const date = dateSource.createdAt ? dateSource.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+    // ステータス：未対応のメッセージが残っているかどうかで判定する
+    const statusLabel = t.unreadCount > 0 ? '未対応' : '対応済み';
+    const statusColor = t.unreadCount > 0 ? '#e74c3c' : '#27ae60';
+    // メッセージ欄：ユーザーが最後に送ってきた内容（管理者の返信と混ざらないようにする）
+    const userMessageHtml = userData ? (userData.message || '—') : '—';
+    // 返信メッセージ欄：管理者が最後に返信した内容
+    const replyHtml = adminData && (adminData.replyMessage || adminData.attachmentName)
+      ? (adminData.replyMessage || '') + (adminData.attachmentName ? '<br><small>📎 ' + adminData.attachmentName + '</small>' : '')
       : '—';
+    const replyAdminName = adminData ? (adminData.replyAdmin || '—') : '—';
 
     const unreadBadge = t.unreadCount > 0
       ? '<span style="background:#e74c3c;color:white;border-radius:12px;padding:1px 7px;font-size:11px;margin-left:6px;">' + t.unreadCount + '</span>'
@@ -156,19 +173,19 @@ router.get('/', requireAuth, async (req, res) => {
         + '</div>'
         + '</td></tr>';
 
-    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + (d.message || '') + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
+    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + userMessageHtml + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
       + '<td data-label="受信日時">' + date + '</td>'
-      + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(primaryName, d.senderPicture)
+      + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(primaryName, dateSource.senderPicture)
       + '<div><div style="font-weight:bold;">' + primaryName + unreadBadge + countBadge + '</div>'
       + '<div style="font-size:12px;color:#888;margin-top:2px;">' + secondaryLabel + '</div>'
       + '<div style="font-size:11px;color:#aaa;margin-top:1px;">ID: ' + sid + '</div></div>'
       + '</a></td>'
       + '<td data-label="所属事業所">' + (profile.workplace || '—') + '</td>'
       + '<td data-label="在留資格">' + (profile.residenceStatus || '—') + '</td>'
-      + '<td data-label="メッセージ">' + (d.message || '—') + '</td>'
+      + '<td data-label="メッセージ">' + userMessageHtml + '</td>'
       + '<td data-label="返信メッセージ">' + replyHtml + '</td>'
-      + '<td data-label="返信した管理者">' + (d.replyAdmin || '—') + '</td>'
-      + '<td data-label="ステータス" style="color:' + statusColor + ';font-weight:bold;">' + (d.status || '未対応') + '</td>'
+      + '<td data-label="返信した管理者">' + replyAdminName + '</td>'
+      + '<td data-label="ステータス" style="color:' + statusColor + ';font-weight:bold;">' + statusLabel + '</td>'
       + '<td data-label="操作">' + replyBtn + '</td>'
       + '</tr>' + replyForm;
   }).join('');

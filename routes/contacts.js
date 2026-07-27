@@ -14,9 +14,25 @@ router.get('/', requireAuth, async (req, res) => {
   const users = {};
   snapshot.docs.forEach(doc => {
     const d = doc.data(); const sid = d.senderId;
-    if (!users[sid]) users[sid] = { senderId: sid, senderName: d.senderName || '不明', senderPicture: d.senderPicture || null, count: 0, unread: 0, lastMessage: d.message || '', lastDate: d.createdAt };
-    users[sid].count++;
-    if (d.status === '未対応') users[sid].unread++;
+    if (!users[sid]) users[sid] = {
+      senderId: sid,
+      senderName: d.senderName || '不明',
+      senderPicture: d.senderPicture || null,
+      count: 0,
+      unread: 0,
+      lastMessage: '',      // ユーザーが最後に送ってきたメッセージ（管理者の返信は含めない）
+      lastDate: d.createdAt // 一覧の並び順表示用：直近の活動全体（ユーザー・管理者どちらでも）
+    };
+    const u = users[sid];
+    u.count++;
+    if (d.status === '未対応') u.unread++;
+    if (!d.isAdminSent && !u.lastMessageSet) {
+      u.lastMessage = d.message || '';
+      u.lastMessageSet = true;
+      // ユーザー由来の名前・アイコンを優先して保持する
+      u.senderName = d.senderName || u.senderName;
+      u.senderPicture = d.senderPicture || u.senderPicture;
+    }
   });
   const senderIds = Object.keys(users);
   const profileMap = {};
@@ -41,7 +57,7 @@ router.get('/', requireAuth, async (req, res) => {
       + '<div style="font-size:11px;color:#aaa;margin-top:1px;">ID: ' + u.senderId + '</div></div>'
       + '</div></td>'
       + '<td data-label="所属事業所">' + (profile.workplace || '—') + '</td><td data-label="在留資格">' + (profile.residenceStatus || '—') + '</td>'
-      + '<td data-label="最新メッセージ">' + u.lastMessage + '</td><td data-label="最終日時">' + lastDate + '</td><td data-label="件数">' + u.count + '</td>'
+      + '<td data-label="最新メッセージ">' + (u.lastMessage || '—') + '</td><td data-label="最終日時">' + lastDate + '</td><td data-label="件数">' + u.count + '</td>'
       + '</tr>';
   }).join('');
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
