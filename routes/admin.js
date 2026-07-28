@@ -313,7 +313,10 @@ async function sendReply(formId, senderId, mode) {
       res = await fetch('/admin/contacts/' + senderId + '/send', { method: 'POST', body: formData2 });
     }
     var data = await res.json();
-    if (data.success) {
+    if (data.success && data.warning) {
+      result.textContent = '⚠️ ' + data.warning; result.style.color = '#9c640c';
+      setTimeout(function(){ location.reload(); }, 2500);
+    } else if (data.success) {
       result.textContent = '✅ 送信完了！'; result.style.color = 'green';
       setTimeout(function(){ location.reload(); }, 1500);
     } else {
@@ -401,36 +404,6 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
     const doc = await docRef.get();
     if (!doc.exists) return res.json({ success: false, error: 'メッセージが見つかりません' });
 
-    let attachmentName = null;
-    let attachmentType = null;
-    let attachmentUrl = null;
-    let attachmentPublicId = null;
-    let attachmentResourceType = null;
-
-    if (req.file) {
-      const fileType = getAttachmentType(req.file.mimetype);
-      attachmentName = req.file.originalname;
-      attachmentType = fileType;
-
-      // Cloudinaryにアップロードして公開URLを取得し、そのURLをMessengerに渡す
-      // （/me/message_attachments は権限不足のため使用しない）
-      const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
-      attachmentUrl = uploaded.url;
-      attachmentPublicId = uploaded.publicId;
-      attachmentResourceType = uploaded.resourceType;
-
-      const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-      const msgRes = await axios.post(msgUrl, {
-        recipient: { id: senderId },
-        message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-        messaging_type: 'RESPONSE'
-      });
-      if (msgRes.data && msgRes.data.error) {
-        console.error('添付送信エラー:', msgRes.data.error);
-        return res.json({ success: false, error: msgRes.data.error.message });
-      }
-    }
-
     // 署名をセッションから取得（なければFirestoreから取得）
     let signature = req.session.adminSignature || '';
     if (!signature) {
@@ -446,9 +419,58 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
     // 署名込みのテキストを作成
     const replyText = (message || '') + (signature ? '\n\n' + signature : '');
 
-    // 署名込みで送信
+    // テキストを先に送信する（本文はできるだけ確実に届けるため、添付より先に処理する）
     if (replyText.trim()) {
-      await sendMessage(senderId, replyText);
+      try {
+        await sendMessage(senderId, replyText);
+      } catch (textErr) {
+        const fbError = textErr.response && textErr.response.data && textErr.response.data.error;
+        console.error('返信エラー（本文）:', senderId, fbError ? JSON.stringify(fbError) : textErr.message);
+        return res.json({ success: false, error: fbError ? fbError.message : textErr.message });
+      }
+    }
+
+    // 添付ファイル送信（Cloudinaryにアップロードして公開URLをMessengerに渡す）
+    // 注意：本文はすでに届いているため、ここで失敗しても処理を打ち切らない
+    let attachmentName = null;
+    let attachmentType = null;
+    let attachmentUrl = null;
+    let attachmentPublicId = null;
+    let attachmentResourceType = null;
+    let attachmentSendFailed = false;
+    let attachmentSendError = null;
+
+    if (req.file) {
+      try {
+        const fileType = getAttachmentType(req.file.mimetype);
+        attachmentName = req.file.originalname;
+        attachmentType = fileType;
+
+        const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+        attachmentUrl = uploaded.url;
+        attachmentPublicId = uploaded.publicId;
+        attachmentResourceType = uploaded.resourceType;
+
+        const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+        const msgRes = await axios.post(msgUrl, {
+          recipient: { id: senderId },
+          message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
+          messaging_type: 'RESPONSE'
+        });
+        if (msgRes.data && msgRes.data.error) {
+          attachmentSendFailed = true;
+          attachmentSendError = msgRes.data.error.message;
+        }
+      } catch (attachErr) {
+        const fbError = attachErr.response && attachErr.response.data && attachErr.response.data.error;
+        attachmentSendFailed = true;
+        attachmentSendError = fbError ? fbError.message : attachErr.message;
+      }
+      if (attachmentSendFailed) {
+        console.error('添付送信エラー詳細:', senderId, attachmentSendError);
+        attachmentUrl = null;
+        attachmentPublicId = null;
+      }
     }
 
     await docRef.update({
@@ -456,16 +478,24 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       replyMessage: replyText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      attachmentName, attachmentType, attachmentUrl,
-      attachmentPublicId, attachmentResourceType,
-      hasAttachment: !!attachmentPublicId,
+      attachmentName: attachmentSendFailed ? null : attachmentName,
+      attachmentType,
+      attachmentUrl,
+      attachmentPublicId,
+      attachmentResourceType,
+      hasAttachment: !attachmentSendFailed && !!attachmentPublicId,
       attachmentDeleted: false
     });
 
+    if (attachmentSendFailed) {
+      return res.json({ success: true, warning: '本文は届きましたが、添付ファイルの送信に失敗しました: ' + attachmentSendError });
+    }
+
     res.json({ success: true });
   } catch (err) {
-    console.error('返信エラー:', err.message);
-    res.json({ success: false, error: err.message });
+    const fbError = err.response && err.response.data && err.response.data.error;
+    console.error('返信エラー:', senderId, fbError ? JSON.stringify(fbError) : err.message);
+    res.json({ success: false, error: fbError ? fbError.message : err.message });
   }
 });
 

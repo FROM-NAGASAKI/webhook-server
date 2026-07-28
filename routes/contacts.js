@@ -209,7 +209,8 @@ async function sendReply(docId, senderId) {
     if (fileInput.files&&fileInput.files.length>0) fd.append('file',fileInput.files[0]);
     var res = await fetch('/admin/reply',{method:'POST',body:fd});
     var data = await res.json();
-    if (data.success) { result.textContent='✅ 送信完了！'; result.style.color='green'; setTimeout(function(){location.reload();},1500); }
+    if (data.success && data.warning) { result.textContent='⚠️ '+data.warning; result.style.color='#9c640c'; setTimeout(function(){location.reload();},2500); }
+    else if (data.success) { result.textContent='✅ 送信完了！'; result.style.color='green'; setTimeout(function(){location.reload();},1500); }
     else { result.textContent='✗ 送信失敗: '+data.error; result.style.color='red'; }
   } catch(e) { result.textContent='✗ エラー: '+e.message; result.style.color='red'; }
 }
@@ -264,7 +265,13 @@ async function sendNewMessage() {
     if (fileInput&&fileInput.files&&fileInput.files.length>0) fd.append('file',fileInput.files[0]);
     var res = await fetch('/admin/contacts/${senderId}/send',{method:'POST',body:fd});
     var data = await res.json();
-    if (data.success) {
+    if (data.success && data.warning) {
+      result.textContent='⚠️ '+data.warning; result.style.color='#9c640c';
+      document.getElementById('newMsgJa').value='';
+      document.getElementById('newMsgEn').value='';
+      if(fileInput) fileInput.value='';
+      setTimeout(function(){location.reload();},2500);
+    } else if (data.success) {
       result.textContent='✅ 送信完了！'; result.style.color='green';
       document.getElementById('newMsgJa').value='';
       document.getElementById('newMsgEn').value='';
@@ -390,37 +397,51 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
       });
       const data = await response.json();
       if (data.error) {
-        console.error('個別送信エラー:', data.error.message);
+        console.error('個別送信エラー（本文）:', senderId, data.error.message);
         return res.json({ success: false, error: data.error.message });
       }
     }
 
     // ファイル添付送信（Cloudinaryにアップロードし、公開URLをMessengerに渡す）
     // /me/message_attachments を使わないため権限不足エラー(#100 2018047)を回避できる
+    // 注意：本文はすでに届いているため、添付が失敗しても処理を打ち切らない
     let attachmentName = null;
     let attachmentUrl = null;
     let attachmentPublicId = null;
     let attachmentResourceType = null;
+    let attachmentSendFailed = false;
+    let attachmentSendError = null;
     if (req.file) {
-      const fileType = getAttachmentType(req.file.mimetype);
-      attachmentName = req.file.originalname;
-      console.log('Cloudinaryアップロード開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
+      try {
+        const fileType = getAttachmentType(req.file.mimetype);
+        attachmentName = req.file.originalname;
+        console.log('Cloudinaryアップロード開始:', req.file.originalname, req.file.mimetype, fileType, req.file.size);
 
-      const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
-      attachmentUrl = uploaded.url;
-      attachmentPublicId = uploaded.publicId;
-      attachmentResourceType = uploaded.resourceType;
-      console.log('Cloudinaryアップロード完了:', attachmentUrl);
+        const uploaded = await uploadToCloudinary(req.file.buffer, req.file.originalname, req.file.mimetype);
+        attachmentUrl = uploaded.url;
+        attachmentPublicId = uploaded.publicId;
+        attachmentResourceType = uploaded.resourceType;
+        console.log('Cloudinaryアップロード完了:', attachmentUrl);
 
-      const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
-      const msgRes = await axiosContact.post(msgUrl, {
-        recipient: { id: senderId },
-        message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-        messaging_type: 'RESPONSE'
-      });
-      if (msgRes.data && msgRes.data.error) {
-        console.error('添付送信エラー:', msgRes.data.error);
-        return res.json({ success: false, error: msgRes.data.error.message });
+        const msgUrl = 'https://graph.facebook.com/v19.0/me/messages?access_token=' + PAGE_ACCESS_TOKEN;
+        const msgRes = await axiosContact.post(msgUrl, {
+          recipient: { id: senderId },
+          message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
+          messaging_type: 'RESPONSE'
+        });
+        if (msgRes.data && msgRes.data.error) {
+          attachmentSendFailed = true;
+          attachmentSendError = msgRes.data.error.message;
+        }
+      } catch (attachErr) {
+        const fbError = attachErr.response && attachErr.response.data && attachErr.response.data.error;
+        attachmentSendFailed = true;
+        attachmentSendError = fbError ? fbError.message : attachErr.message;
+      }
+      if (attachmentSendFailed) {
+        console.error('添付送信エラー詳細:', senderId, attachmentSendError);
+        attachmentUrl = null;
+        attachmentPublicId = null;
       }
     }
 
@@ -436,26 +457,30 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
       senderId,
       senderName,
       senderPicture: null,
-      message: '[管理者送信] ' + (message || '') + (attachmentName ? ' [添付: ' + attachmentName + ']' : ''),
+      message: '[管理者送信] ' + (message || '') + (attachmentName ? (attachmentSendFailed ? ' [添付失敗: ' + attachmentName + ']' : ' [添付: ' + attachmentName + ']') : ''),
       replyMessage: sendText,
       replyAdmin: req.session.adminDisplayName || '管理者',
       repliedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: '対応済み',
       isAdminSent: true,
-      attachmentName,
+      attachmentName: attachmentSendFailed ? null : attachmentName,
       attachmentUrl,
       attachmentPublicId,
       attachmentResourceType,
-      hasAttachment: !!attachmentPublicId,
+      hasAttachment: !attachmentSendFailed && !!attachmentPublicId,
       attachmentDeleted: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     console.log('個別送信成功:', senderId, senderName);
+    if (attachmentSendFailed) {
+      return res.json({ success: true, warning: '本文は届きましたが、添付ファイルの送信に失敗しました: ' + attachmentSendError });
+    }
     res.json({ success: true });
   } catch (err) {
-    console.error('個別送信エラー:', err.message, err.response ? JSON.stringify(err.response.data) : '');
-    res.json({ success: false, error: err.message });
+    const fbError = err.response && err.response.data && err.response.data.error;
+    console.error('個別送信エラー:', senderId, fbError ? JSON.stringify(fbError) : err.message);
+    res.json({ success: false, error: fbError ? fbError.message : err.message });
   }
 });
 
