@@ -49,6 +49,19 @@ router.get('/', requireAuth, async (req, res) => {
     + '<span id="displayNameMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
     + '</div>'
 
+    // メール通知設定
+    + '<div class="section">'
+    + '<h3>🔔 メール通知設定</h3>'
+    + '<p style="font-size:13px;color:#888;margin-top:0;">新しい問い合わせが届いたときに、登録したメールアドレス宛に通知します。</p>'
+    + '<label>通知先メールアドレス</label>'
+    + '<input type="text" id="notifyEmail" value="' + (adminData.notifyEmail || '') + '" placeholder="例：murakami@example.com">'
+    + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;margin-bottom:16px;">'
+    + '<input type="checkbox" id="notifyEnabled" style="width:auto;margin:0;" ' + (adminData.notifyEnabled ? 'checked' : '') + '> 新しい問い合わせをメールで受け取る'
+    + '</label>'
+    + '<button class="save" onclick="saveNotifyEmail()">💾 通知設定を保存</button>'
+    + '<span id="notifyEmailMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
+
     // パスワード変更
     + '<div class="section">'
     + '<h3>🔑 パスワード変更</h3>'
@@ -84,6 +97,20 @@ router.get('/', requireAuth, async (req, res) => {
     + 'var res=await fetch("/admin/profile/displayname",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({displayName})});'
     + 'var data=await res.json();'
     + 'if(data.success){msg.textContent="✅ 保存しました";msg.style.color="green";setTimeout(function(){location.reload();},1000);}'
+    + 'else{msg.textContent="✗ 保存失敗: "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function saveNotifyEmail(){'
+    + 'var msg=document.getElementById("notifyEmailMsg");'
+    + 'msg.textContent="保存中...";msg.style.color="gray";'
+    + 'var notifyEmail=document.getElementById("notifyEmail").value.trim();'
+    + 'var notifyEnabled=document.getElementById("notifyEnabled").checked;'
+    + 'if(notifyEnabled&&!notifyEmail){msg.textContent="△ メールアドレスを入力してください";msg.style.color="orange";return;}'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/notification-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({notifyEmail,notifyEnabled})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ 保存しました";msg.style.color="green";}'
     + 'else{msg.textContent="✗ 保存失敗: "+data.error;msg.style.color="red";}'
     + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
     + '}'
@@ -135,6 +162,32 @@ router.post('/displayname', requireAuth, async (req, res) => {
     if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
     await snapshot.docs[0].ref.update({ displayName, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     req.session.adminDisplayName = displayName;
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// メール通知設定保存API
+router.post('/notification-email', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { notifyEmail, notifyEnabled } = req.body;
+
+  // ごく簡易的なメール形式チェック（厳密なRFC準拠チェックは行わない）
+  if (notifyEnabled && (!notifyEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail))) {
+    return res.json({ success: false, error: 'メールアドレスの形式が正しくありません' });
+  }
+
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    await snapshot.docs[0].ref.update({
+      notifyEmail: notifyEmail || '',
+      notifyEnabled: !!notifyEnabled,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });

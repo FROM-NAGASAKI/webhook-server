@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const { sendMessage } = require('../helpers/facebook');
+const { notifyAdminsOfNewInquiry } = require('../helpers/mailer');
 const VERIFY_TOKEN = 'union_support_verify_2024';
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
@@ -182,6 +183,11 @@ router.post('/webhook', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
           console.log('Firestore保存成功:', senderName);
+
+          // 新規問い合わせのメール通知（登録済みの管理者へ）
+          // 失敗してもWebhook自体の処理には影響させない
+          notifyAdminsOfNewInquiry(db, { senderName, senderId, messageText: displayMessage })
+            .catch(err => console.error('メール通知エラー:', err.message));
         } catch (err) {
           console.error('Firestore保存エラー:', err.message);
         }
