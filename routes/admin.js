@@ -89,12 +89,22 @@ router.get('/', requireAuth, async (req, res) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const pageThreads = threads.slice(offset, offset + PAGE_SIZE);
 
-  const senderIds = pageThreads.map(t => t.senderId);
+  // contactsは全件まとめて取得（都度個別取得よりも高速で、絞り込み用ドロップダウンの
+  // 選択肢もページに関係なく全体から作れる）
+  const contactsSnapshot = await db.collection('contacts').get();
   const profileMap = {};
-  await Promise.all(senderIds.map(async sid => {
-    const doc = await db.collection('contacts').doc(sid).get();
-    if (doc.exists) profileMap[sid] = doc.data();
-  }));
+  contactsSnapshot.docs.forEach(doc => { profileMap[doc.id] = doc.data(); });
+
+  // 絞り込みドロップダウンの選択肢（全スレッド分から重複無しで作成）
+  const workplaceSet = new Set();
+  const residenceSet = new Set();
+  threads.forEach(t => {
+    const p = profileMap[t.senderId] || {};
+    if (p.workplace) workplaceSet.add(p.workplace);
+    if (p.residenceStatus) residenceSet.add(p.residenceStatus);
+  });
+  const workplaceOptions = [...workplaceSet].sort().map(w => '<option value="' + w + '">' + w + '</option>').join('');
+  const residenceOptions = [...residenceSet].sort().map(r => '<option value="' + r + '">' + r + '</option>').join('');
 
   const latestISO = allSnapshot.size > 0 && allSnapshot.docs[0].data().createdAt
     ? allSnapshot.docs[0].data().createdAt.toDate().toISOString() : '';
@@ -173,7 +183,7 @@ router.get('/', requireAuth, async (req, res) => {
         + '</div>'
         + '</td></tr>';
 
-    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + userMessageHtml + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '">'
+    return '<tr class="msg-row" data-search="' + fbName + ' ' + registeredName + ' ' + (profile.workplace || '') + ' ' + userMessageHtml + ' ' + (profile.residenceStatus || '') + '" data-docid="' + formId + '" data-workplace="' + (profile.workplace || '') + '" data-residence="' + (profile.residenceStatus || '') + '">'
       + '<td data-label="受信日時">' + date + '</td>'
       + '<td data-label="名前"><a href="/admin/contacts/' + sid + '" style="color:#2980b9;text-decoration:none;display:flex;align-items:flex-start;">' + avatarHtml(primaryName, dateSource.senderPicture)
       + '<div><div style="font-weight:bold;">' + primaryName + unreadBadge + countBadge + '</div>'
@@ -219,6 +229,8 @@ var latestISO = '${latestISO}';
 function filterRows() {
   var kw = document.getElementById('searchInput').value.toLowerCase();
   var status = document.getElementById('statusFilter').value;
+  var workplace = document.getElementById('workplaceFilter').value;
+  var residence = document.getElementById('residenceFilter').value;
   var rows = document.querySelectorAll('tr.msg-row');
   var count = 0;
   rows.forEach(function(row) {
@@ -227,7 +239,12 @@ function filterRows() {
     var replyRow = docId ? document.getElementById('reply-' + docId) : null;
     var statusCell = row.querySelector('td:nth-child(8)');
     var rowStatus = statusCell ? statusCell.textContent.trim() : '';
-    var show = (!kw || search.includes(kw)) && (!status || rowStatus === status);
+    var rowWorkplace = row.dataset.workplace || '';
+    var rowResidence = row.dataset.residence || '';
+    var show = (!kw || search.includes(kw))
+      && (!status || rowStatus === status)
+      && (!workplace || rowWorkplace === workplace)
+      && (!residence || rowResidence === residence);
     row.style.display = show ? '' : 'none';
     if (replyRow) replyRow.style.display = 'none';
     if (show) count++;
@@ -238,6 +255,8 @@ function filterRows() {
 function clearSearch() {
   document.getElementById('searchInput').value = '';
   document.getElementById('statusFilter').value = '';
+  document.getElementById('workplaceFilter').value = '';
+  document.getElementById('residenceFilter').value = '';
   filterRows();
 }
 
@@ -355,6 +374,8 @@ setInterval(checkNewMessages, 60000);
     + '<div class="container" style="overflow-x:auto;">'
     + '<div class="search-bar">'
     + '<input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">'
+    + '<select id="workplaceFilter" onchange="filterRows()"><option value="">すべての事業所</option>' + workplaceOptions + '</select>'
+    + '<select id="residenceFilter" onchange="filterRows()"><option value="">すべての在留資格</option>' + residenceOptions + '</select>'
     + '<select id="statusFilter" onchange="filterRows()"><option value="">すべてのステータス</option><option value="未対応">未対応</option><option value="対応済み">対応済み</option></select>'
     + '<button class="btn-clear" onclick="clearSearch()">× クリア</button>'
     + '<span class="search-count" id="searchCount">' + pageThreads.length + ' 名</span>'
