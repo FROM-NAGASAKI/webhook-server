@@ -49,6 +49,10 @@ router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const page = parseInt(req.query.page) || 1;
   const offset = (page - 1) * PAGE_SIZE;
+  const filterKeyword = req.query.keyword || '';
+  const filterWorkplace = req.query.workplace || '';
+  const filterResidence = req.query.residence || '';
+  const filterStatus = req.query.status || '';
 
   // 全メッセージを新しい順で取得し、送信者ごとにグループ化する
   // Map を使うことで、送信者ID（数字の文字列）でも挿入順（＝時系列の新しい順）が保たれる
@@ -84,10 +88,7 @@ router.get('/', requireAuth, async (req, res) => {
     }
   });
 
-  const threads = Array.from(threadsMap.values()); // すでに最新順
-  const totalCount = threads.length;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const pageThreads = threads.slice(offset, offset + PAGE_SIZE);
+  const allThreads = Array.from(threadsMap.values()); // すでに最新順
 
   // contactsは全件まとめて取得（都度個別取得よりも高速で、絞り込み用ドロップダウンの
   // 選択肢もページに関係なく全体から作れる）
@@ -98,13 +99,38 @@ router.get('/', requireAuth, async (req, res) => {
   // 絞り込みドロップダウンの選択肢（全スレッド分から重複無しで作成）
   const workplaceSet = new Set();
   const residenceSet = new Set();
-  threads.forEach(t => {
+  allThreads.forEach(t => {
     const p = profileMap[t.senderId] || {};
     if (p.workplace) workplaceSet.add(p.workplace);
     if (p.residenceStatus) residenceSet.add(p.residenceStatus);
   });
-  const workplaceOptions = [...workplaceSet].sort().map(w => '<option value="' + w + '">' + w + '</option>').join('');
-  const residenceOptions = [...residenceSet].sort().map(r => '<option value="' + r + '">' + r + '</option>').join('');
+  const workplaceOptions = [...workplaceSet].sort().map(w => '<option value="' + w + '" ' + (filterWorkplace === w ? 'selected' : '') + '>' + w + '</option>').join('');
+  const residenceOptions = [...residenceSet].sort().map(r => '<option value="' + r + '" ' + (filterResidence === r ? 'selected' : '') + '>' + r + '</option>').join('');
+
+  // 絞り込み（キーワード・事業所・在留資格・ステータス）をページングの前に適用する。
+  // これをしないと「2ページ目には絞り込みが引き継がれない」問題が起きるため。
+  const kwLower = filterKeyword.toLowerCase();
+  const threads = allThreads.filter(t => {
+    const profile = profileMap[t.senderId] || {};
+    const fbName = (t.latestUserData ? t.latestUserData.senderName : t.latestData.senderName) || '不明';
+    const registeredName = profile.passportName || '';
+    const primaryName = registeredName || fbName;
+    const userMessage = t.latestUserData ? (t.latestUserData.message || '') : '';
+    const statusLabel = t.unreadCount > 0 ? '未対応' : '対応済み';
+
+    if (filterWorkplace && (profile.workplace || '') !== filterWorkplace) return false;
+    if (filterResidence && (profile.residenceStatus || '') !== filterResidence) return false;
+    if (filterStatus && statusLabel !== filterStatus) return false;
+    if (kwLower) {
+      const haystack = (primaryName + ' ' + fbName + ' ' + (profile.workplace || '') + ' ' + (profile.residenceStatus || '') + ' ' + userMessage).toLowerCase();
+      if (!haystack.includes(kwLower)) return false;
+    }
+    return true;
+  });
+
+  const totalCount = threads.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const pageThreads = threads.slice(offset, offset + PAGE_SIZE);
 
   const latestISO = allSnapshot.size > 0 && allSnapshot.docs[0].data().createdAt
     ? allSnapshot.docs[0].data().createdAt.toDate().toISOString() : '';
@@ -200,22 +226,26 @@ router.get('/', requireAuth, async (req, res) => {
       + '</tr>' + replyForm;
   }).join('');
 
-  // ページネーションHTML
+  // ページネーションHTML（絞り込み条件を維持したままページ送りする）
+  function pageUrl(p) {
+    const params = new URLSearchParams({ page: p, keyword: filterKeyword, workplace: filterWorkplace, residence: filterResidence, status: filterStatus });
+    return '/admin?' + params.toString();
+  }
   let paginationHtml = '<div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap;">';
   if (page > 1) {
-    paginationHtml += '<a href="/admin?page=' + (page-1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">← 前へ</a>';
+    paginationHtml += '<a href="' + pageUrl(page - 1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">← 前へ</a>';
   }
   for (let i = 1; i <= totalPages; i++) {
     if (i === page) {
       paginationHtml += '<span style="padding:8px 14px;background:#2c3e50;color:white;border-radius:4px;">' + i + '</span>';
     } else if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
-      paginationHtml += '<a href="/admin?page=' + i + '" style="padding:8px 14px;background:white;color:#2980b9;border:1px solid #2980b9;border-radius:4px;text-decoration:none;">' + i + '</a>';
+      paginationHtml += '<a href="' + pageUrl(i) + '" style="padding:8px 14px;background:white;color:#2980b9;border:1px solid #2980b9;border-radius:4px;text-decoration:none;">' + i + '</a>';
     } else if (i === page - 3 || i === page + 3) {
       paginationHtml += '<span style="padding:8px 4px;color:#888;">...</span>';
     }
   }
   if (page < totalPages) {
-    paginationHtml += '<a href="/admin?page=' + (page+1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">次へ →</a>';
+    paginationHtml += '<a href="' + pageUrl(page + 1) + '" style="padding:8px 16px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;">次へ →</a>';
   }
   paginationHtml += '</div>';
   paginationHtml += '<div style="text-align:center;margin-top:8px;font-size:13px;color:#888;">'
@@ -225,40 +255,6 @@ router.get('/', requireAuth, async (req, res) => {
   const script = `
 <script>
 var latestISO = '${latestISO}';
-
-function filterRows() {
-  var kw = document.getElementById('searchInput').value.toLowerCase();
-  var status = document.getElementById('statusFilter').value;
-  var workplace = document.getElementById('workplaceFilter').value;
-  var residence = document.getElementById('residenceFilter').value;
-  var rows = document.querySelectorAll('tr.msg-row');
-  var count = 0;
-  rows.forEach(function(row) {
-    var search = (row.dataset.search || '').toLowerCase();
-    var docId = row.dataset.docid;
-    var replyRow = docId ? document.getElementById('reply-' + docId) : null;
-    var statusCell = row.querySelector('td:nth-child(8)');
-    var rowStatus = statusCell ? statusCell.textContent.trim() : '';
-    var rowWorkplace = row.dataset.workplace || '';
-    var rowResidence = row.dataset.residence || '';
-    var show = (!kw || search.includes(kw))
-      && (!status || rowStatus === status)
-      && (!workplace || rowWorkplace === workplace)
-      && (!residence || rowResidence === residence);
-    row.style.display = show ? '' : 'none';
-    if (replyRow) replyRow.style.display = 'none';
-    if (show) count++;
-  });
-  document.getElementById('searchCount').textContent = count + ' 名';
-}
-
-function clearSearch() {
-  document.getElementById('searchInput').value = '';
-  document.getElementById('statusFilter').value = '';
-  document.getElementById('workplaceFilter').value = '';
-  document.getElementById('residenceFilter').value = '';
-  filterRows();
-}
 
 function openReply(docId) {
   var row = document.getElementById('reply-' + docId);
@@ -349,7 +345,8 @@ setInterval(checkNewMessages, 60000);
     + '.search-bar{display:flex;gap:8px;margin-bottom:16px;align-items:center;background:white;padding:12px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);flex-wrap:wrap;}'
     + '.search-bar input{flex:1;min-width:200px;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}'
     + '.search-bar select{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;}'
-    + '.btn-clear{padding:8px 14px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;}'
+    + '.btn-clear{padding:8px 14px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block;}'
+    + '.btn-search{padding:8px 16px;background:#2980b9;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;}'
     + '.search-count{font-size:14px;color:#555;}'
     + 'table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}'
     + 'th{background:#2c3e50;color:white;padding:12px 16px;text-align:left;font-size:13px;}'
@@ -358,7 +355,7 @@ setInterval(checkNewMessages, 60000);
     + '@media (max-width:768px){'
     + '.container{padding:8px;}'
     + '.search-bar{padding:10px;gap:6px;}'
-    + '.search-bar input,.search-bar select,.btn-clear{width:100%;min-width:0;flex:none;}'
+    + '.search-bar input,.search-bar select,.btn-clear,.btn-search{width:100%;min-width:0;flex:none;box-sizing:border-box;text-align:center;}'
     + '.search-count{width:100%;text-align:right;}'
     + 'table,thead,tbody{display:block;width:100%;}'
     + 'thead{display:none;}'
@@ -372,14 +369,17 @@ setInterval(checkNewMessages, 60000);
     + '</style></head><body>'
     + '<header><h1>📋 問い合わせ管理画面</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container" style="overflow-x:auto;">'
+    + '<form method="get" action="/admin">'
     + '<div class="search-bar">'
-    + '<input type="text" id="searchInput" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索..." oninput="filterRows()">'
-    + '<select id="workplaceFilter" onchange="filterRows()"><option value="">すべての事業所</option>' + workplaceOptions + '</select>'
-    + '<select id="residenceFilter" onchange="filterRows()"><option value="">すべての在留資格</option>' + residenceOptions + '</select>'
-    + '<select id="statusFilter" onchange="filterRows()"><option value="">すべてのステータス</option><option value="未対応">未対応</option><option value="対応済み">対応済み</option></select>'
-    + '<button class="btn-clear" onclick="clearSearch()">× クリア</button>'
-    + '<span class="search-count" id="searchCount">' + pageThreads.length + ' 名</span>'
+    + '<input type="text" name="keyword" value="' + filterKeyword + '" placeholder="🔍 名前・メッセージ・事業所・在留資格で検索...">'
+    + '<select name="workplace"><option value="">すべての事業所</option>' + workplaceOptions + '</select>'
+    + '<select name="residence"><option value="">すべての在留資格</option>' + residenceOptions + '</select>'
+    + '<select name="status"><option value="">すべてのステータス</option><option value="未対応" ' + (filterStatus === '未対応' ? 'selected' : '') + '>未対応</option><option value="対応済み" ' + (filterStatus === '対応済み' ? 'selected' : '') + '>対応済み</option></select>'
+    + '<button type="submit" class="btn-search">絞り込み</button>'
+    + '<a href="/admin" class="btn-clear">× クリア</a>'
+    + '<span class="search-count">' + totalCount + ' 名</span>'
     + '</div>'
+    + '</form>'
     + '<table><thead><tr>'
     + '<th>受信日時</th><th>名前</th><th>所属事業所</th><th>在留資格</th>'
     + '<th>メッセージ</th><th>返信メッセージ</th><th>返信した管理者</th><th>ステータス</th><th>操作</th>'
