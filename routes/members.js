@@ -99,14 +99,14 @@ router.get('/', requireAuth, async (req, res) => {
   const rows = filtered.map(m => {
     const unreadBadge = m.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${m.unread}</span>` : '';
     return `<tr onclick="location.href='/admin/contacts/${m.senderId}'" style="cursor:pointer;">
-      <td><div style="display:flex;align-items:center;gap:8px;">${avatarHtml(m.name, m.picture)}<div><strong>${m.name}</strong>${unreadBadge}<div style="font-size:11px;color:#888;">${m.senderId}</div></div></div></td>
-      <td>${m.workplace || '—'}</td>
-      <td>${m.residenceStatus || '—'}</td>
-      <td>${m.entryDate || '—'}</td>
-      <td style="text-align:center;">${m.count}</td>
-      <td style="text-align:center;color:${m.unread > 0 ? '#e74c3c' : '#27ae60'};">${m.unread}</td>
-      <td>${m.lastDate}</td>
-      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#888;">${m.notes || '—'}</td>
+      <td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">${avatarHtml(m.name, m.picture)}<div><strong>${m.name}</strong>${unreadBadge}<div style="font-size:11px;color:#888;">${m.senderId}</div></div></div></td>
+      <td data-label="所属事業所">${m.workplace || '—'}</td>
+      <td data-label="在留資格">${m.residenceStatus || '—'}</td>
+      <td data-label="入国日">${m.entryDate || '—'}</td>
+      <td data-label="件数" style="text-align:center;">${m.count}</td>
+      <td data-label="未対応" style="text-align:center;color:${m.unread > 0 ? '#e74c3c' : '#27ae60'};">${m.unread}</td>
+      <td data-label="最終日時">${m.lastDate}</td>
+      <td data-label="備考" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#888;">${m.notes || '—'}</td>
     </tr>`;
   }).join('');
 
@@ -126,6 +126,18 @@ tr:hover td{background:#f0f7ff;}
 .filter-bar button{padding:8px 16px;background:#2980b9;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;}
 .filter-bar a{padding:8px 16px;background:#95a5a6;color:white;border-radius:4px;text-decoration:none;font-size:14px;}
 .count-badge{background:#2c3e50;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px;}
+@media (max-width:768px){
+  .container{padding:8px;}
+  .filter-bar{padding:12px;gap:8px;}
+  .filter-bar input,.filter-bar select,.filter-bar button,.filter-bar a{width:100%;box-sizing:border-box;text-align:center;}
+  table,thead,tbody{display:block;width:100%;}
+  thead{display:none;}
+  tbody tr{display:block;background:white;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.12);margin-bottom:10px;padding:10px 14px;}
+  tbody tr td{display:block;padding:6px 0;border-bottom:1px solid #f0f0f0;white-space:normal!important;max-width:none!important;overflow:visible!important;text-overflow:clip!important;}
+  tbody tr td:last-child{border-bottom:none;}
+  tbody tr td[data-label]:before{content:attr(data-label);display:block;font-size:11px;font-weight:bold;color:#999;margin-bottom:2px;}
+  tbody tr td[data-label="名前"]:before{display:none;}
+}
 </style>
 </head><body>
 <header><h1>👥 メンバー一覧</h1>${navHtml(req.session.adminDisplayName)}</header>
