@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { navHtml, commonCss, avatarHtml } = require('../helpers/html');
 const { startSurvey } = require('../helpers/surveyEngine');
+const { HUMAN_AGENT_APPROVED } = require('../helpers/facebook');
 
 // アンケート一覧
 router.get('/', requireAuth, async (req, res) => {
@@ -261,10 +262,12 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
   });
 
   const rows = members.map(m => {
-    const over7Days = m.diffHours > 24 * 7;
+    const maxHours = HUMAN_AGENT_APPROVED ? 24 * 7 : 24;
+    const over7Days = m.diffHours > maxHours;
+    const badgeLabel = HUMAN_AGENT_APPROVED ? '7日' : '24時間';
     const badge = over7Days
-      ? '<span class="badge-over7d" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日超</span>'
-      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日以内</span>';
+      ? '<span class="badge-over7d" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">' + badgeLabel + '超</span>'
+      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">' + badgeLabel + '以内</span>';
     return '<tr>'
       + '<td data-label="選択" style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '"></td>'
       + '<td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">' + avatarHtml(m.name, m.picture) + '<strong>' + m.name + '</strong>' + badge + '</div></td>'
@@ -275,7 +278,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
   res.send(pageShell('📤 アンケート送信：' + survey.title, req.session.adminDisplayName, `
     <div class="card">
       <p style="margin:0;color:#555;">「<strong>${survey.title}</strong>」（全${(survey.questions||[]).length}問）を送信します。</p>
-      <p style="font-size:13px;color:#888;">※ HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。7日を超えるユーザーは送信できません。</p>
+      <p style="font-size:13px;color:#888;">※ ${HUMAN_AGENT_APPROVED ? 'HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。7日を超えるユーザーは送信できません。' : 'HUMAN_AGENTタグは現在Meta側の承認待ちのため、最終メッセージから24時間以内のユーザーにのみ送信可能です。'}</p>
     </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
       <label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"> 全選択/解除</label>
@@ -291,7 +294,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
     async function sendSurvey() {
       var targets = [...document.querySelectorAll("input[name='targets']:checked")].map(function(c){ return c.value; });
       var over7dUsers = [...document.querySelectorAll("input[name='targets']:checked")].filter(function(c){ var row=c.closest('tr'); return row && row.querySelector('.badge-over7d'); }).map(function(c){ var row=c.closest('tr'); return row.querySelector('strong').textContent; });
-      if (over7dUsers.length > 0) { alert('⚠️ 以下のユーザーは7日を超えているため送信できません。\\n' + over7dUsers.join('\\n')); return; }
+      if (over7dUsers.length > 0) { alert('⚠️ 以下のユーザーは送信可能期間を超えているため送信できません。\\n' + over7dUsers.join('\\n')); return; }
       if (targets.length === 0) { alert('送信対象を選択してください'); return; }
       if (!confirm(targets.length + '名に送信します。よろしいですか？')) return;
       var btn = document.getElementById('sendBtn'); btn.disabled = true; btn.textContent = '送信中...';

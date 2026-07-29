@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
-const { sendMessage, getAttachmentType } = require('../helpers/facebook');
+const { sendMessage, getAttachmentType, resolveMessagingParams } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss } = require('../helpers/html');
 const { uploadToCloudinary } = require('../helpers/cloudinary');
 const { resolveAllUnread } = require('../helpers/messages');
@@ -421,8 +421,7 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
         body: JSON.stringify({
           recipient: { id: senderId },
           message: { text: sendText },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT' // 管理者が手動で書いた返信のため使用可（24時間ルールを超えて最大7日間送信可能）
+          ...resolveMessagingParams('HUMAN_AGENT') // 未承認のうちは自動的にRESPONSE（24時間ルール）にフォールバックする
         })
       });
       const data = await response.json();
@@ -457,8 +456,7 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
         const msgRes = await axiosContact.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
+          ...resolveMessagingParams('HUMAN_AGENT')
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;

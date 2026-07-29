@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { avatarHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const { uploadToCloudinary } = require('../helpers/cloudinary');
+const { resolveMessagingParams, HUMAN_AGENT_APPROVED } = require('../helpers/facebook');
 const { resolveAllUnread } = require('../helpers/messages');
 const multer = require('multer');
 const axios = require('axios');
@@ -69,10 +70,13 @@ router.get('/', requireAuth, async (req, res) => {
   const residenceOptions = residences.map(r => '<option value="' + r + '" ' + (filterResidence === r ? 'selected' : '') + '>' + r + '</option>').join('');
 
   const rows = filtered.map(m => {
-    const over7Days = m.diffHours > 24 * 7;
+    // HUMAN_AGENTタグが未承認のうちは実質24時間ルールのままなので、閾値もそれに合わせる
+    const maxHours = HUMAN_AGENT_APPROVED ? 24 * 7 : 24;
+    const over7Days = m.diffHours > maxHours;
+    const badgeLabel = HUMAN_AGENT_APPROVED ? '7日' : '24時間';
     const badge = over7Days
-      ? '<span class="badge-over7d" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日超</span>'
-      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日以内</span>';
+      ? '<span class="badge-over7d" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">' + badgeLabel + '超</span>'
+      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">' + badgeLabel + '以内</span>';
     return '<tr>'
       + '<td data-label="選択" style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '"></td>'
       + '<td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">' + avatarHtml(m.name, m.picture) + '<strong>' + m.name + '</strong>' + badge + '</div></td>'
@@ -155,7 +159,7 @@ router.get('/', requireAuth, async (req, res) => {
     + '<input type="file" id="broadcastFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
     + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
     + '</div>'
-    + '<div style="font-size:13px;color:#888;">※ HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。</div>'
+    + '<div style="font-size:13px;color:#888;">※ ' + (HUMAN_AGENT_APPROVED ? 'HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。' : 'HUMAN_AGENTタグは現在Meta側の承認待ちのため、最終メッセージから24時間以内のユーザーにのみ送信可能です。') + '</div>'
     + '</div>'
 
     + '<form method="get" action="/admin/broadcast">'
@@ -232,7 +236,7 @@ router.get('/', requireAuth, async (req, res) => {
     + 'if(!sendText&&(!fileInput.files||fileInput.files.length===0)){alert("メッセージまたはファイルを入力してください");return;}'
     + 'if(targets.length===0){alert("送信対象を選択してください");return;}'
     + 'var over7dUsers=[...document.querySelectorAll("input[name=\'targets\']:checked")].filter(function(c){var row=c.closest("tr");return row&&row.querySelector(".badge-over7d");}).map(function(c){var row=c.closest("tr");return row.querySelector("strong").textContent;});'
-    + 'if(over7dUsers.length>0){alert("\u26a0\ufe0f 以下のユーザーは最終メッセージから7日以上経過しているため、HUMAN_AGENTタグでも送信できません。\\n個別に再度連絡を取ってから送信してください。\\n\\n"+over7dUsers.join("\\n"));return;}'
+    + 'if(over7dUsers.length>0){alert("\u26a0\ufe0f 以下のユーザーは送信可能期間を超えているため送信できません。\\n個別に再度連絡を取ってから送信してください。\\n\\n"+over7dUsers.join("\\n"));return;}'
     + 'if(!confirm(targets.length+"名に送信します。よろしいですか？"))return;'
     + 'var btn=document.getElementById("sendBtn");'
     + 'btn.disabled=true;btn.textContent="送信中...";'
@@ -311,8 +315,7 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
           body: JSON.stringify({
             recipient: { id: senderId },
             message: { text: sendText },
-            messaging_type: 'MESSAGE_TAG',
-            tag: 'HUMAN_AGENT' // 管理者が手動で書いた内容のグループ送信のため使用可（最大7日間）
+            ...resolveMessagingParams('HUMAN_AGENT') // 未承認のうちは自動的にRESPONSE（24時間ルール）にフォールバックする
           })
         });
         const data = await response.json();
@@ -348,8 +351,7 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
         const msgRes = await axios.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
+          ...resolveMessagingParams('HUMAN_AGENT')
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;

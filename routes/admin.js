@@ -4,7 +4,7 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const { requireAuth } = require('../helpers/auth');
-const { sendMessage, getAttachmentType } = require('../helpers/facebook');
+const { sendMessage, getAttachmentType, resolveMessagingParams } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const { uploadToCloudinary } = require('../helpers/cloudinary');
 const { resolveAllUnread } = require('../helpers/messages');
@@ -485,8 +485,7 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
         const msgRes = await axios.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
+          ...resolveMessagingParams('HUMAN_AGENT')
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;
