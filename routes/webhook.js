@@ -114,7 +114,7 @@ router.post('/webhook', async (req, res) => {
         // アンケート回答として処理する
         if (event.message.quick_reply && event.message.quick_reply.payload) {
           try {
-            const { handleSurveyReply } = require('../helpers/surveys');
+            const { handleSurveyReply } = require('../helpers/surveyEngine');
             const result = await handleSurveyReply(db, admin, senderId, event.message.quick_reply.payload);
             if (result) {
               console.log('アンケート回答を記録:', senderId, result.questionText, '→', result.answerLabel);
