@@ -450,7 +450,8 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
     // テキストを先に送信する（本文はできるだけ確実に届けるため、添付より先に処理する）
     if (replyText.trim()) {
       try {
-        await sendMessage(senderId, replyText);
+        // 管理者が手動で書いた返信のため、HUMAN_AGENTタグで送信（24時間ルールを超えて最大7日間送信可能）
+        await sendMessage(senderId, replyText, 'HUMAN_AGENT');
       } catch (textErr) {
         const fbError = textErr.response && textErr.response.data && textErr.response.data.error;
         console.error('返信エラー（本文）:', senderId, fbError ? JSON.stringify(fbError) : textErr.message);
@@ -483,7 +484,8 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
         const msgRes = await axios.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'RESPONSE'
+          messaging_type: 'MESSAGE_TAG',
+          tag: 'HUMAN_AGENT'
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;

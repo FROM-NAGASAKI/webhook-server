@@ -68,10 +68,10 @@ router.get('/', requireAuth, async (req, res) => {
   const residenceOptions = residences.map(r => '<option value="' + r + '" ' + (filterResidence === r ? 'selected' : '') + '>' + r + '</option>').join('');
 
   const rows = filtered.map(m => {
-    const over24 = m.diffHours > 24;
-    const badge = over24
-      ? '<span class="badge-over24" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h超</span>'
-      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">24h内</span>';
+    const over7Days = m.diffHours > 24 * 7;
+    const badge = over7Days
+      ? '<span class="badge-over7d" style="background:#e67e22;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日超</span>'
+      : '<span style="background:#27ae60;color:white;border-radius:4px;padding:2px 6px;font-size:11px;margin-left:6px;">7日以内</span>';
     return '<tr>'
       + '<td data-label="選択" style="text-align:center;"><input type="checkbox" name="targets" value="' + m.senderId + '"></td>'
       + '<td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">' + avatarHtml(m.name, m.picture) + '<strong>' + m.name + '</strong>' + badge + '</div></td>'
@@ -154,7 +154,7 @@ router.get('/', requireAuth, async (req, res) => {
     + '<input type="file" id="broadcastFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
     + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
     + '</div>'
-    + '<div style="font-size:13px;color:#888;">※ HUMAN_AGENTタグを使用するため24時間以上経過したユーザーにも送信可能です。</div>'
+    + '<div style="font-size:13px;color:#888;">※ HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。</div>'
     + '</div>'
 
     + '<form method="get" action="/admin/broadcast">'
@@ -230,8 +230,8 @@ router.get('/', requireAuth, async (req, res) => {
     + 'var targets=[...document.querySelectorAll("input[name=\'targets\']:checked")].map(function(c){return c.value;});'
     + 'if(!sendText&&(!fileInput.files||fileInput.files.length===0)){alert("メッセージまたはファイルを入力してください");return;}'
     + 'if(targets.length===0){alert("送信対象を選択してください");return;}'
-    + 'var over24Users=[...document.querySelectorAll("input[name=\'targets\']:checked")].filter(function(c){var row=c.closest("tr");return row&&row.querySelector(".badge-over24");}).map(function(c){var row=c.closest("tr");return row.querySelector("strong").textContent;});'
-    + 'if(over24Users.length>0){alert("\u26a0\ufe0f 以下のユーザーは最終メッセージから24時間以上経過しているため送信できません。\\n個別にメッセージを送信してください。\\n\\n"+over24Users.join("\\n"));return;}'
+    + 'var over7dUsers=[...document.querySelectorAll("input[name=\'targets\']:checked")].filter(function(c){var row=c.closest("tr");return row&&row.querySelector(".badge-over7d");}).map(function(c){var row=c.closest("tr");return row.querySelector("strong").textContent;});'
+    + 'if(over7dUsers.length>0){alert("\u26a0\ufe0f 以下のユーザーは最終メッセージから7日以上経過しているため、HUMAN_AGENTタグでも送信できません。\\n個別に再度連絡を取ってから送信してください。\\n\\n"+over7dUsers.join("\\n"));return;}'
     + 'if(!confirm(targets.length+"名に送信します。よろしいですか？"))return;'
     + 'var btn=document.getElementById("sendBtn");'
     + 'btn.disabled=true;btn.textContent="送信中...";'
@@ -310,7 +310,8 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
           body: JSON.stringify({
             recipient: { id: senderId },
             message: { text: sendText },
-            messaging_type: 'RESPONSE'
+            messaging_type: 'MESSAGE_TAG',
+            tag: 'HUMAN_AGENT' // 管理者が手動で書いた内容のグループ送信のため使用可（最大7日間）
           })
         });
         const data = await response.json();
@@ -346,7 +347,8 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
         const msgRes = await axios.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'RESPONSE'
+          messaging_type: 'MESSAGE_TAG',
+          tag: 'HUMAN_AGENT'
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;

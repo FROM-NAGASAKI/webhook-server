@@ -345,7 +345,7 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '<div class="card"><h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>' + messages + '</div>'
     + '<div class="card" style="border:2px solid #2980b9;">'
     + '<h3 style="margin-top:0;color:#2980b9;">✉️ 新規メッセージ送信</h3>'
-    + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため24時間以上経過していても送信可能です。</p>'
+    + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎていても送信可能です。</p>'
     + '<div style="margin-bottom:10px;">'
     + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📋 定型文を使う</label>'
     + '<select id="tplSelect-newMsg" onchange="applyTemplate(this,\'newMsgJa\')" onfocus="loadTemplatesInto(this)" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;max-width:400px;width:100%;"><option value="">📋 定型文を選択...</option></select>'
@@ -420,7 +420,8 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
         body: JSON.stringify({
           recipient: { id: senderId },
           message: { text: sendText },
-          messaging_type: 'RESPONSE'
+          messaging_type: 'MESSAGE_TAG',
+          tag: 'HUMAN_AGENT' // 管理者が手動で書いた返信のため使用可（24時間ルールを超えて最大7日間送信可能）
         })
       });
       const data = await response.json();
@@ -455,7 +456,8 @@ router.post('/:senderId/send', requireAuth, uploadContact.single('file'), async 
         const msgRes = await axiosContact.post(msgUrl, {
           recipient: { id: senderId },
           message: { attachment: { type: fileType, payload: { url: attachmentUrl, is_reusable: true } } },
-          messaging_type: 'RESPONSE'
+          messaging_type: 'MESSAGE_TAG',
+          tag: 'HUMAN_AGENT'
         });
         if (msgRes.data && msgRes.data.error) {
           attachmentSendFailed = true;
