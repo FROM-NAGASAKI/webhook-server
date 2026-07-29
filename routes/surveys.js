@@ -103,6 +103,18 @@ router.get('/', requireAuth, async (req, res) => {
   `));
 });
 
+// アンケート一覧取得API（他の画面のドロップダウンから呼ばれる）
+router.get('/list-json', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  try {
+    const snapshot = await db.collection('surveys').orderBy('createdAt', 'desc').get();
+    const surveys = snapshot.docs.map(d => ({ id: d.id, title: d.data().title || '（無題）' }));
+    res.json({ surveys });
+  } catch (err) {
+    res.json({ surveys: [], error: err.message });
+  }
+});
+
 // アンケート作成API
 router.post('/create', requireAuth, async (req, res) => {
   const db = req.app.get('db');

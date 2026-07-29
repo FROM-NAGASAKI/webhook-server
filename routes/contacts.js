@@ -188,6 +188,40 @@ function applyTemplate(selectEl, textareaId) {
   selectEl.value = '';
 }
 
+var __surveysCache = null;
+async function loadSurveyOptionsInto(selectEl) {
+  if (__surveysCache) return;
+  try {
+    var res = await fetch('/admin/surveys/list-json');
+    var data = await res.json();
+    __surveysCache = data.surveys || [];
+  } catch(e) { __surveysCache = []; }
+  document.querySelectorAll("select[id^='surveySelect-']").forEach(function(sel) {
+    var current = sel.value;
+    sel.innerHTML = '<option value="">アンケートを選択...</option>' + __surveysCache.map(function(s) {
+      return '<option value="' + s.id + '">' + s.title + '</option>';
+    }).join('');
+    sel.value = current;
+  });
+}
+async function sendSurveyTo(senderId, selectId, resultId) {
+  var select = document.getElementById(selectId);
+  var surveyId = select.value;
+  var result = document.getElementById(resultId);
+  if (!surveyId) { result.textContent = '△ アンケートを選択してください'; result.style.color = 'orange'; return; }
+  if (!confirm('このアンケートを送信しますか？')) return;
+  result.textContent = '送信中...'; result.style.color = 'gray';
+  try {
+    var res = await fetch('/admin/surveys/' + surveyId + '/send-one', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderId: senderId })
+    });
+    var data = await res.json();
+    if (data.success) { result.textContent = '✅ 送信しました'; result.style.color = 'green'; }
+    else { result.textContent = '✗ 失敗: ' + data.error; result.style.color = 'red'; }
+  } catch(e) { result.textContent = '✗ エラー: ' + e.message; result.style.color = 'red'; }
+}
+
 async function translateMsg(docId) {
   var msgEl = document.getElementById('msg-' + docId);
   var statusEl = document.getElementById('trans-status-' + docId);
@@ -376,6 +410,12 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '</div>'
     + '<button onclick="sendNewMessage()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">📤 送信</button>'
     + '<span id="newMsgResult" style="margin-left:12px;font-weight:bold;font-size:14px;"></span>'
+    + '<div style="border-top:1px solid #ddd;margin-top:16px;padding-top:12px;">'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">🗳️ この相手にアンケートを送る（上記メッセージとは別に送信できます）</label>'
+    + '<select id="surveySelect-detail" onfocus="loadSurveyOptionsInto(this)" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;max-width:350px;width:100%;margin-right:8px;"><option value="">アンケートを選択...</option></select>'
+    + '<button onclick="sendSurveyTo(\'' + senderId + '\',\'surveySelect-detail\',\'surveyResult-detail\')" style="background:#8e44ad;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:14px;">送信</button>'
+    + '<span id="surveyResult-detail" style="margin-left:10px;font-weight:bold;font-size:14px;"></span>'
+    + '</div>'
     + '</div>'
     + '</div>'
     + script
