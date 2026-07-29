@@ -110,6 +110,34 @@ router.post('/webhook', async (req, res) => {
         const attachments = event.message.attachments || [];
         console.log('Webhook受信:', senderId, messageText, '添付:', attachments.length);
 
+        // クイックリプライ（アンケートのボタン回答）の場合は、通常の問い合わせとしてではなく
+        // アンケート回答として処理する
+        if (event.message.quick_reply && event.message.quick_reply.payload) {
+          try {
+            const { handleSurveyReply } = require('../helpers/surveys');
+            const result = await handleSurveyReply(db, admin, senderId, event.message.quick_reply.payload);
+            if (result) {
+              console.log('アンケート回答を記録:', senderId, result.questionText, '→', result.answerLabel);
+              // 会話履歴に見える形でも残しておく（対応済み扱いなので未対応件数には影響しない）
+              try {
+                await db.collection('messages').add({
+                  senderId,
+                  senderName: '不明',
+                  senderPicture: null,
+                  message: '[アンケート回答] ' + result.questionText + ' → ' + result.answerLabel,
+                  status: '対応済み',
+                  createdAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+              } catch (e) {
+                console.error('アンケート回答の記録エラー:', e.message);
+              }
+              continue; // 通常の問い合わせ処理はスキップ
+            }
+          } catch (err) {
+            console.error('アンケート回答処理エラー:', err.message);
+          }
+        }
+
         let senderName = '不明';
         let senderPicture = null;
         let contactRef = null;

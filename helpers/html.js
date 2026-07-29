@@ -57,6 +57,7 @@ function navHtml(adminName) {
     + '<a href="/admin/contacts">👥 ユーザー履歴</a>'
     + '<a href="/admin/members">📊 メンバー一覧</a>'
     + '<a href="/admin/broadcast">📢 グループ送信</a>'
+    + '<a href="/admin/surveys">🗳️ アンケート</a>'
     + '<a href="/admin/users">👤 管理者</a>'
     + '<a href="/admin/profile" style="background:rgba(52,152,219,0.4);">⚙️ マイプロフィール</a>'
     + '<span style="margin-left:16px;font-size:13px;opacity:0.8;">' + (adminName || '') + '</span>'
