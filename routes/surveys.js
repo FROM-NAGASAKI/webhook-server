@@ -35,6 +35,11 @@ router.get('/', requireAuth, async (req, res) => {
       <div id="questionList"></div>
       <button type="button" onclick="addQuestion()" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;margin-bottom:12px;">➕ 質問を追加</button>
       <br>
+      <label>アンケート完了時に送るメッセージ</label>
+      <textarea id="newCompletionMessage" rows="6" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;">Thank you for your response.
+If you have anything you’d like to discuss, please write it in this message.
+If you’d like to discuss something without your coworkers finding out, please write “Keep this confidential from my company.”
+If your work or personal circumstances change, please feel free to contact me via Messenger at any time—you don’t have to wait for the periodic survey.</textarea>
       <button onclick="createSurvey()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">💾 アンケートを作成</button>
       <span id="createMsg" style="margin-left:12px;font-weight:bold;"></span>
     </div>
@@ -79,11 +84,12 @@ router.get('/', requireAuth, async (req, res) => {
       });
       if (!title) { msg.textContent = '△ タイトルを入力してください'; msg.style.color = 'orange'; return; }
       if (questions.length === 0) { msg.textContent = '△ 質問を1つ以上入力してください'; msg.style.color = 'orange'; return; }
+      var completionMessage = document.getElementById('newCompletionMessage').value;
       msg.textContent = '作成中...'; msg.style.color = 'gray';
       try {
         var res = await fetch('/admin/surveys/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title, questions: questions })
+          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage })
         });
         var data = await res.json();
         if (data.success) { msg.textContent = '✅ 作成しました'; msg.style.color = 'green'; setTimeout(function(){ location.reload(); }, 800); }
@@ -119,13 +125,14 @@ router.get('/list-json', requireAuth, async (req, res) => {
 router.post('/create', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { title, questions } = req.body;
+  const { title, questions, completionMessage } = req.body;
   if (!title || !questions || questions.length === 0) {
     return res.json({ success: false, error: 'タイトルと質問が必要です' });
   }
   try {
     await db.collection('surveys').add({
       title, questions,
+      completionMessage: completionMessage || '',
       createdBy: req.session.adminDisplayName || '管理者',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -151,6 +158,8 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
       <div id="questionList"></div>
       <button type="button" onclick="addQuestion()" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;margin-bottom:12px;">➕ 質問を追加</button>
       <br>
+      <label>アンケート完了時に送るメッセージ</label>
+      <textarea id="editCompletionMessage" rows="6" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;">${(survey.completionMessage || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
       <button onclick="updateSurvey()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">💾 更新を保存</button>
       <a href="/admin/surveys" style="margin-left:12px;color:#2980b9;">← 一覧に戻る</a>
       <span id="editMsg" style="margin-left:12px;font-weight:bold;"></span>
@@ -194,11 +203,12 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
         questions.push({ id: 'q' + i, text: text, options: options });
       });
       if (!title || questions.length === 0) { msg.textContent = '△ タイトルと質問を入力してください'; msg.style.color = 'orange'; return; }
+      var completionMessage = document.getElementById('editCompletionMessage').value;
       msg.textContent = '保存中...'; msg.style.color = 'gray';
       try {
         var res = await fetch('/admin/surveys/${req.params.surveyId}/update', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title, questions: questions })
+          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage })
         });
         var data = await res.json();
         if (data.success) { msg.textContent = '✅ 保存しました'; msg.style.color = 'green'; }
@@ -212,13 +222,15 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
 router.post('/:surveyId/update', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { title, questions } = req.body;
+  const { title, questions, completionMessage } = req.body;
   if (!title || !questions || questions.length === 0) {
     return res.json({ success: false, error: 'タイトルと質問が必要です' });
   }
   try {
     await db.collection('surveys').doc(req.params.surveyId).update({
-      title, questions, updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      title, questions,
+      completionMessage: completionMessage || '',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
     res.json({ success: true });
   } catch (err) {

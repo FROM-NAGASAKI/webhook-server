@@ -82,7 +82,8 @@ async function handleSurveyReply(db, admin, senderId, payload) {
     });
     await contactRef.update({ activeSurveyResponseId: admin.firestore.FieldValue.delete() }).catch(() => {});
     try {
-      await sendMessage(senderId, 'ご回答ありがとうございました。');
+      const completionMessage = survey.completionMessage || 'ご回答ありがとうございました。';
+      await sendMessage(senderId, completionMessage);
     } catch (e) {}
   }
 
