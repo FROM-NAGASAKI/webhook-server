@@ -13,6 +13,20 @@ router.get('/', requireAuth, async (req, res) => {
   const adminData = snapshot.docs[0].data();
   const docId = snapshot.docs[0].id;
 
+  const templatesSnapshot = await db.collection('admins').doc(docId).collection('templates').orderBy('createdAt', 'asc').get();
+  const templates = templatesSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  const templateRows = templates.map(t =>
+    '<div class="template-item" data-id="' + t.id + '">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px;">'
+    + '<input type="text" class="tpl-title" value="' + (t.title || '').replace(/"/g, '&quot;') + '" style="font-weight:bold;flex:1;margin-bottom:0;padding:6px 10px;">'
+    + '<button onclick="deleteTemplate(\'' + t.id + '\')" style="background:#e74c3c;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;">🗑️ 削除</button>'
+    + '</div>'
+    + '<textarea class="tpl-body" rows="3" style="margin-bottom:6px;">' + (t.body || '') + '</textarea>'
+    + '<button onclick="updateTemplate(\'' + t.id + '\')" style="background:#2980b9;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;">💾 この定型文を更新</button>'
+    + '<span class="tpl-msg" style="margin-left:8px;font-size:12px;font-weight:bold;"></span>'
+    + '</div>'
+  ).join('') || '<p style="color:#888;font-size:13px;">まだ定型文がありません。下のフォームから追加してください。</p>';
+
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>マイプロフィール</title>'
@@ -25,6 +39,7 @@ router.get('/', requireAuth, async (req, res) => {
     + 'button.save:hover{background:#1a6fa8;}'
     + '.section{margin-bottom:32px;}'
     + '.section h3{margin-top:0;color:#2c3e50;border-bottom:2px solid #eee;padding-bottom:8px;}'
+    + '.template-item{background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:12px;margin-bottom:12px;}'
     + '</style></head><body>'
     + '<header><h1>👤 マイプロフィール</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container">'
@@ -60,6 +75,21 @@ router.get('/', requireAuth, async (req, res) => {
     + '</label>'
     + '<button class="save" onclick="saveNotifyEmail()">💾 通知設定を保存</button>'
     + '<span id="notifyEmailMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
+
+    // 定型文設定
+    + '<div class="section">'
+    + '<h3>📋 定型文設定</h3>'
+    + '<p style="font-size:13px;color:#888;margin-top:0;">よく使うメッセージを登録しておくと、返信・グループ送信時に選んで呼び出せます。</p>'
+    + '<div id="templateList">' + templateRows + '</div>'
+    + '<div style="border-top:1px solid #eee;padding-top:16px;margin-top:16px;">'
+    + '<label>新しい定型文のタイトル</label>'
+    + '<input type="text" id="newTplTitle" placeholder="例：出勤確認のお願い">'
+    + '<label>本文</label>'
+    + '<textarea id="newTplBody" rows="4" placeholder="定型文の本文を入力..."></textarea>'
+    + '<button class="save" onclick="addTemplate()">➕ 定型文を追加</button>'
+    + '<span id="newTplMsg" style="margin-left:12px;font-size:14px;font-weight:bold;"></span>'
+    + '</div>'
     + '</div>'
 
     // パスワード変更
@@ -113,6 +143,45 @@ router.get('/', requireAuth, async (req, res) => {
     + 'if(data.success){msg.textContent="✅ 保存しました";msg.style.color="green";}'
     + 'else{msg.textContent="✗ 保存失敗: "+data.error;msg.style.color="red";}'
     + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function addTemplate(){'
+    + 'var msg=document.getElementById("newTplMsg");'
+    + 'var title=document.getElementById("newTplTitle").value.trim();'
+    + 'var body=document.getElementById("newTplBody").value.trim();'
+    + 'if(!title||!body){msg.textContent="△ タイトルと本文を入力してください";msg.style.color="orange";return;}'
+    + 'msg.textContent="追加中...";msg.style.color="gray";'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/templates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,body})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ 追加しました";msg.style.color="green";setTimeout(function(){location.reload();},800);}'
+    + 'else{msg.textContent="✗ 失敗: "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function updateTemplate(id){'
+    + 'var item=document.querySelector(".template-item[data-id=\'"+id+"\']");'
+    + 'var msg=item.querySelector(".tpl-msg");'
+    + 'var title=item.querySelector(".tpl-title").value.trim();'
+    + 'var body=item.querySelector(".tpl-body").value.trim();'
+    + 'if(!title||!body){msg.textContent="△ 入力してください";msg.style.color="orange";return;}'
+    + 'msg.textContent="保存中...";msg.style.color="gray";'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/templates/"+id,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,body})});'
+    + 'var data=await res.json();'
+    + 'if(data.success){msg.textContent="✅ 更新しました";msg.style.color="green";}'
+    + 'else{msg.textContent="✗ 失敗: "+data.error;msg.style.color="red";}'
+    + '}catch(e){msg.textContent="✗ エラー: "+e.message;msg.style.color="red";}'
+    + '}'
+
+    + 'async function deleteTemplate(id){'
+    + 'if(!confirm("この定型文を削除しますか？"))return;'
+    + 'try{'
+    + 'var res=await fetch("/admin/profile/templates/"+id+"/delete",{method:"POST"});'
+    + 'var data=await res.json();'
+    + 'if(data.success){location.reload();}'
+    + 'else{alert("削除失敗: "+data.error);}'
+    + '}catch(e){alert("エラー: "+e.message);}'
     + '}'
 
     + 'async function changePassword(){'
@@ -209,6 +278,79 @@ router.post('/password', requireAuth, async (req, res) => {
       return res.json({ success: false, error: '現在のパスワードが正しくありません' });
     }
     await snapshot.docs[0].ref.update({ passwordHash: hashPassword(newPassword), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 定型文一覧取得API（他の画面のドロップダウンから呼ばれる）
+router.get('/templates', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const adminId = req.session.adminId;
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ templates: [] });
+    const docId = snapshot.docs[0].id;
+    const tplSnapshot = await db.collection('admins').doc(docId).collection('templates').orderBy('createdAt', 'asc').get();
+    const templates = tplSnapshot.docs.map(d => ({ id: d.id, title: d.data().title, body: d.data().body }));
+    res.json({ templates });
+  } catch (err) {
+    res.json({ templates: [], error: err.message });
+  }
+});
+
+// 定型文追加API
+router.post('/templates', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { title, body } = req.body;
+  if (!title || !body) return res.json({ success: false, error: 'タイトルと本文を入力してください' });
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    const docId = snapshot.docs[0].id;
+    await db.collection('admins').doc(docId).collection('templates').add({
+      title, body, createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 定型文更新API
+router.post('/templates/:templateId', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  const adminId = req.session.adminId;
+  const { templateId } = req.params;
+  const { title, body } = req.body;
+  if (!title || !body) return res.json({ success: false, error: 'タイトルと本文を入力してください' });
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    const docId = snapshot.docs[0].id;
+    await db.collection('admins').doc(docId).collection('templates').doc(templateId).update({
+      title, body, updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 定型文削除API
+router.post('/templates/:templateId/delete', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const adminId = req.session.adminId;
+  const { templateId } = req.params;
+  try {
+    const snapshot = await db.collection('admins').where('userId', '==', adminId).limit(1).get();
+    if (snapshot.empty) return res.json({ success: false, error: '管理者が見つかりません' });
+    const docId = snapshot.docs[0].id;
+    await db.collection('admins').doc(docId).collection('templates').doc(templateId).delete();
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });

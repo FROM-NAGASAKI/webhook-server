@@ -178,6 +178,10 @@ router.get('/', requireAuth, async (req, res) => {
 
     const replyForm = '<tr id="reply-' + formId + '" style="display:none;background:#f0f7ff;">'
         + '<td colspan="9" style="padding:12px;">'
+        + '<div style="margin-bottom:8px;">'
+        + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📋 定型文を使う</label>'
+        + '<select id="tplSelect-' + formId + '" onchange="applyTemplate(this,\'text-' + formId + '\')" onfocus="loadTemplatesInto(this)" style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;max-width:350px;width:100%;"><option value="">📋 定型文を選択...</option></select>'
+        + '</div>'
         + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
         + '<div>'
         + '<label style="font-size:12px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
@@ -255,6 +259,30 @@ router.get('/', requireAuth, async (req, res) => {
   const script = `
 <script>
 var latestISO = '${latestISO}';
+
+var __templatesCache = null;
+async function loadTemplatesInto(selectEl) {
+  if (__templatesCache) return; // 一度読み込んだら再取得しない
+  try {
+    var res = await fetch('/admin/profile/templates');
+    var data = await res.json();
+    __templatesCache = data.templates || [];
+  } catch(e) { __templatesCache = []; }
+  document.querySelectorAll("select[id^='tplSelect-']").forEach(function(sel) {
+    var current = sel.value;
+    sel.innerHTML = '<option value="">📋 定型文を選択...</option>' + __templatesCache.map(function(t, i) {
+      return '<option value="' + i + '">' + t.title + '</option>';
+    }).join('');
+    sel.value = current;
+  });
+}
+function applyTemplate(selectEl, textareaId) {
+  var idx = selectEl.value;
+  if (idx === '' || !__templatesCache) return;
+  var t = __templatesCache[idx];
+  if (t) document.getElementById(textareaId).value = t.body;
+  selectEl.value = '';
+}
 
 function openReply(docId) {
   var row = document.getElementById('reply-' + docId);

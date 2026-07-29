@@ -163,6 +163,30 @@ router.get('/:senderId', requireAuth, async (req, res) => {
 
   const script = `
 <script>
+var __templatesCache = null;
+async function loadTemplatesInto(selectEl) {
+  if (__templatesCache) return; // 一度読み込んだら再取得しない
+  try {
+    var res = await fetch('/admin/profile/templates');
+    var data = await res.json();
+    __templatesCache = data.templates || [];
+  } catch(e) { __templatesCache = []; }
+  document.querySelectorAll("select[id^='tplSelect-']").forEach(function(sel) {
+    var current = sel.value;
+    sel.innerHTML = '<option value="">📋 定型文を選択...</option>' + __templatesCache.map(function(t, i) {
+      return '<option value="' + i + '">' + t.title + '</option>';
+    }).join('');
+    sel.value = current;
+  });
+}
+function applyTemplate(selectEl, textareaId) {
+  var idx = selectEl.value;
+  if (idx === '' || !__templatesCache) return;
+  var t = __templatesCache[idx];
+  if (t) document.getElementById(textareaId).value = t.body;
+  selectEl.value = '';
+}
+
 async function translateMsg(docId) {
   var msgEl = document.getElementById('msg-' + docId);
   var statusEl = document.getElementById('trans-status-' + docId);
@@ -322,6 +346,10 @@ window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
     + '<div class="card" style="border:2px solid #2980b9;">'
     + '<h3 style="margin-top:0;color:#2980b9;">✉️ 新規メッセージ送信</h3>'
     + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため24時間以上経過していても送信可能です。</p>'
+    + '<div style="margin-bottom:10px;">'
+    + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📋 定型文を使う</label>'
+    + '<select id="tplSelect-newMsg" onchange="applyTemplate(this,\'newMsgJa\')" onfocus="loadTemplatesInto(this)" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;max-width:400px;width:100%;"><option value="">📋 定型文を選択...</option></select>'
+    + '</div>'
     + '<div class="compose-grid">'
     + '<div>'
     + '<label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">📝 日本語（入力）</label>'
