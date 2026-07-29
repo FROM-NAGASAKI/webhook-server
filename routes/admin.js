@@ -7,6 +7,7 @@ const { requireAuth } = require('../helpers/auth');
 const { sendMessage, getAttachmentType } = require('../helpers/facebook');
 const { avatarHtml, attachmentHtml, messengerLinkHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const { uploadToCloudinary } = require('../helpers/cloudinary');
+const { resolveAllUnread } = require('../helpers/messages');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const PAGE_SIZE = 50;
@@ -516,6 +517,14 @@ router.post('/reply', requireAuth, upload.single('file'), async (req, res) => {
       hasAttachment: !attachmentSendFailed && !!attachmentPublicId,
       attachmentDeleted: false
     });
+
+    // 連続して複数メッセージが届いていた場合、この返信でまとめて未対応を解消する
+    try {
+      const resolvedCount = await resolveAllUnread(db, senderId, docId);
+      if (resolvedCount > 0) console.log('未対応をまとめて解消:', senderId, resolvedCount + '件');
+    } catch (e) {
+      console.error('未対応一括解消エラー:', senderId, e.message);
+    }
 
     if (attachmentSendFailed) {
       return res.json({ success: true, warning: '本文は届きましたが、添付ファイルの送信に失敗しました: ' + attachmentSendError });

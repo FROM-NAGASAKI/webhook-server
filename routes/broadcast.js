@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { avatarHtml, navHtml, commonCss, pwaHtml } = require('../helpers/html');
 const { uploadToCloudinary } = require('../helpers/cloudinary');
+const { resolveAllUnread } = require('../helpers/messages');
 const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -394,6 +395,14 @@ router.post('/send', requireAuth, upload.single('file'), async (req, res) => {
       hasAttachment: !attachmentSendFailed && !!attachmentPublicId,
       attachmentDeleted: false
     });
+
+    // 連続して複数メッセージが届いていた場合、この送信でまとめて未対応を解消する
+    try {
+      const resolvedCount = await resolveAllUnread(db, senderId);
+      if (resolvedCount > 0) console.log('未対応をまとめて解消:', senderId, resolvedCount + '件');
+    } catch (e) {
+      console.error('未対応一括解消エラー:', senderId, e.message);
+    }
 
     if (attachmentSendFailed) {
       console.log('グループ送信（本文のみ成功、添付失敗）:', senderId, senderName);
