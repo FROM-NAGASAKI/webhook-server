@@ -346,12 +346,18 @@ router.get('/:surveyId/results', requireAuth, async (req, res) => {
   const surveyDoc = await db.collection('surveys').doc(surveyId).get();
   if (!surveyDoc.exists) return res.status(404).send('アンケートが見つかりません');
   const survey = surveyDoc.data();
+  const questions = survey.questions || [];
 
   const responsesSnapshot = await db.collection('surveyResponses').where('surveyId', '==', surveyId).get();
   const responses = responsesSnapshot.docs.map(d => d.data());
   const completed = responses.filter(r => r.status === 'completed');
 
-  const questionBlocks = (survey.questions || []).map(q => {
+  // 回答者の名前（登録名優先、無ければFBアカウント名）を調べるため、contactsをまとめて取得
+  const contactsSnapshot = await db.collection('contacts').get();
+  const contacts = {};
+  contactsSnapshot.docs.forEach(doc => { contacts[doc.id] = doc.data(); });
+
+  const questionBlocks = questions.map(q => {
     const counts = {};
     q.options.forEach(o => { counts[o.value] = 0; });
     completed.forEach(r => {
@@ -370,11 +376,28 @@ router.get('/:surveyId/results', requireAuth, async (req, res) => {
     return '<div class="card"><h4 style="margin-top:0;">' + q.text + '</h4>' + bars + '</div>';
   }).join('');
 
+  // 質問ごとの選択肢ラベルを引くための対応表（値→表示ラベル）
+  const questionHeaders = questions.map(q => '<th>' + q.text + '</th>').join('');
+
   const respondentRows = responses.map(r => {
     const statusLabel = r.status === 'completed' ? '<span style="color:#27ae60;">完了</span>' : '<span style="color:#e67e22;">回答中</span>';
-    return '<tr><td data-label="送信者ID">' + r.senderId + '</td><td data-label="状況">' + statusLabel + '</td>'
-      + '<td data-label="開始日時">' + (r.startedAt ? r.startedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明') + '</td></tr>';
-  }).join('') || '<tr><td colspan="3" style="text-align:center;color:#888;">まだ回答がありません</td></tr>';
+    const profile = contacts[r.senderId] || {};
+    const name = profile.passportName || r.senderName || '不明(' + r.senderId.slice(-4) + ')';
+
+    const answerCells = questions.map(q => {
+      const rawValue = r.answers && r.answers[q.id];
+      if (rawValue === undefined || rawValue === null) return '<td data-label="' + q.text + '" style="color:#ccc;">—</td>';
+      const opt = q.options.find(o => o.value === rawValue);
+      return '<td data-label="' + q.text + '">' + (opt ? opt.label : rawValue) + '</td>';
+    }).join('');
+
+    return '<tr>'
+      + '<td data-label="名前"><a href="/admin/contacts/' + r.senderId + '" style="color:#2980b9;text-decoration:none;font-weight:bold;">' + name + '</a></td>'
+      + answerCells
+      + '<td data-label="状況">' + statusLabel + '</td>'
+      + '<td data-label="開始日時">' + (r.startedAt ? r.startedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明') + '</td>'
+      + '</tr>';
+  }).join('') || '<tr><td colspan="' + (questions.length + 3) + '" style="text-align:center;color:#888;">まだ回答がありません</td></tr>';
 
   res.send(pageShell('📊 結果：' + survey.title, req.session.adminDisplayName, `
     <div class="card">
@@ -382,8 +405,10 @@ router.get('/:surveyId/results', requireAuth, async (req, res) => {
     </div>
     ${questionBlocks}
     <div class="card">
-      <h4 style="margin-top:0;">回答者一覧</h4>
-      <table><thead><tr><th>送信者ID</th><th>状況</th><th>開始日時</th></tr></thead><tbody>${respondentRows}</tbody></table>
+      <h4 style="margin-top:0;">回答者一覧（個人ごとの回答内容）</h4>
+      <div style="overflow-x:auto;">
+      <table><thead><tr><th>名前</th>${questionHeaders}<th>状況</th><th>開始日時</th></tr></thead><tbody>${respondentRows}</tbody></table>
+      </div>
     </div>
     <a href="/admin/surveys" style="color:#2980b9;">← アンケート一覧に戻る</a>
   `, ''));
