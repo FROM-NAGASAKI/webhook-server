@@ -559,4 +559,25 @@ router.get('/attachments/cleanup-now', requireAuth, async (req, res) => {
   }
 });
 
+// 過去分の未対応クリーンアップ（一回限りの手動実行用）
+// 「連続メッセージへの返信で未対応をまとめて解消する」修正より前に取り残された、
+// 実際にはすでに返信済みのはずの未対応メッセージだけを解消します。
+// まだ一度も返信していない本当に未対応のメッセージには触れません。
+router.get('/messages/resolve-stale-unread', requireAuth, async (req, res) => {
+  try {
+    const { resolveStaleUnread } = require('../helpers/messages');
+    const db = req.app.get('db');
+    const result = await resolveStaleUnread(db);
+    res.send(
+      '<h2>過去分の未対応クリーンアップ（手動実行）</h2>'
+      + '<p>チェックした未対応メッセージ数: ' + result.totalChecked + '件</p>'
+      + '<p>対応済みに変更: ' + result.resolvedCount + '件</p>'
+      + '<p>そのまま未対応で残した（本当に未返信）: ' + result.stillUnreadCount + '件</p>'
+      + '<p><a href="/admin">一覧に戻る</a></p>'
+    );
+  } catch (err) {
+    res.status(500).send('エラー: ' + err.message);
+  }
+});
+
 module.exports = router;

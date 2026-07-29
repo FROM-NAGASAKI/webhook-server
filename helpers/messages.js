@@ -19,4 +19,48 @@ async function resolveAllUnread(db, senderId, excludeDocId) {
   return count;
 }
 
-module.exports = { resolveAllUnread };
+// 過去分の一回限りのクリーンアップ用。
+// 「連続メッセージへの返信で未対応をまとめて解消する」修正より前に発生した、
+// 取り残された未対応メッセージ（＝実際にはその後の返信で対応済みのはずのもの）を解消する。
+//
+// 判定方法：送信者ごとに、管理者からの最新返信日時（isAdminSentがtrueの中で一番新しいcreatedAt）を求め、
+// それより前に作成された「未対応」のユーザーメッセージだけを「対応済み」に更新する。
+// 管理者からの返信が一度も無い相手や、返信より後に届いた未対応メッセージは対象外（本当に未対応のまま残す）。
+async function resolveStaleUnread(db) {
+  const snapshot = await db.collection('messages').get();
+
+  const lastAdminReplyAtBySender = new Map(); // senderId -> Date
+  const targets = []; // {doc, senderId, createdAt}
+
+  snapshot.docs.forEach(doc => {
+    const d = doc.data();
+    if (!d.senderId || !d.createdAt) return;
+    if (d.isAdminSent) {
+      const t = d.createdAt.toDate();
+      const current = lastAdminReplyAtBySender.get(d.senderId);
+      if (!current || t > current) lastAdminReplyAtBySender.set(d.senderId, t);
+    } else if (d.status === '未対応') {
+      targets.push({ doc, senderId: d.senderId, createdAt: d.createdAt.toDate() });
+    }
+  });
+
+  const toResolve = targets.filter(t => {
+    const lastReply = lastAdminReplyAtBySender.get(t.senderId);
+    return lastReply && t.createdAt <= lastReply;
+  });
+
+  let resolvedCount = 0;
+  // Firestoreのbatchは1回500件までのため、分割して実行する
+  for (let i = 0; i < toResolve.length; i += 400) {
+    const chunk = toResolve.slice(i, i + 400);
+    const batch = db.batch();
+    chunk.forEach(t => batch.update(t.doc.ref, { status: '対応済み' }));
+    await batch.commit();
+    resolvedCount += chunk.length;
+  }
+
+  const stillUnreadCount = targets.length - resolvedCount;
+  return { resolvedCount, stillUnreadCount, totalChecked: targets.length };
+}
+
+module.exports = { resolveAllUnread, resolveStaleUnread };
