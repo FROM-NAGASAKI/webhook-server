@@ -28,6 +28,7 @@ router.get('/', requireAuth, async (req, res) => {
   ).join('') || '<p style="color:#888;font-size:13px;">まだ定型文がありません。下のフォームから追加してください。</p>';
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>マイプロフィール</title>'
     + '<style>' + commonCss()

@@ -66,6 +66,7 @@ router.get('/', requireAuth, async (req, res) => {
     ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>ユーザー履歴</title>'
     + '<style>' + commonCss() + ' table{width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);}'
@@ -394,6 +395,7 @@ setInterval(checkDetailNewMessages, 5000);
 </script>`;
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>' + senderName + ' の履歴</title>'
     + '<style>' + commonCss()

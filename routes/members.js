@@ -114,6 +114,7 @@ router.get('/', requireAuth, async (req, res) => {
   const residenceOptions = residences.map(r => `<option value="${r}" ${filterResidence === r ? 'selected' : ''}>${r}</option>`).join('');
 
   res.send(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <link rel="icon" href="https://www.facebook.com/favicon.ico">
 <title>メンバー一覧</title>
 <style>${commonCss()}
