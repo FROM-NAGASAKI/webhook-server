@@ -415,6 +415,8 @@ setInterval(checkDetailNewMessages, 5000);
     + '.profile-grid{grid-template-columns:1fr;max-width:none;}'
     + '.compose-grid{grid-template-columns:1fr;}'
     + '.chat-bubble{max-width:85%!important;}'
+    + '.chat-bubble,.chat-bubble *{word-break:break-word!important;overflow-wrap:break-word!important;}'
+    + 'body{overflow-x:hidden;}'
     + '}'
     + '</style></head><body>'
     + '<header><h1>💬 ' + senderName + ' の履歴</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
