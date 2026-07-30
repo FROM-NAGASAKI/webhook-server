@@ -406,7 +406,7 @@ async function checkNewMessages() {
     }
   } catch(e) {}
 }
-setInterval(checkNewMessages, 60000);
+setInterval(checkNewMessages, 30000);
 </script>`;
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'

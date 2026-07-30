@@ -61,6 +61,10 @@ router.get('/', requireAuth, async (req, res) => {
       + '<td data-label="最新メッセージ">' + (u.lastMessage || '—') + '</td><td data-label="最終日時">' + lastDate + '</td><td data-label="件数">' + u.count + '</td>'
       + '</tr>';
   }).join('');
+
+  const latestISO = snapshot.size > 0 && snapshot.docs[0].data().createdAt
+    ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
+
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
     + '<link rel="icon" href="https://www.facebook.com/favicon.ico">'
     + '<title>ユーザー履歴</title>'
@@ -79,7 +83,36 @@ router.get('/', requireAuth, async (req, res) => {
     + '</style>'
     + '</head><body><header><h1>👥 ユーザー履歴</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
     + '<div class="container"><table><thead><tr><th>名前</th><th>所属事業所</th><th>在留資格</th><th>最新メッセージ</th><th>最終日時</th><th>件数</th></tr></thead>'
-    + '<tbody>' + rows + '</tbody></table></div></body></html>');
+    + '<tbody>' + rows + '</tbody></table></div>'
+    + '<script>'
+    + 'var latestISO = "' + latestISO + '";'
+    + 'async function checkNewMessages(){'
+    + 'try{'
+    + 'var res = await fetch("/admin/messages/new?after=" + encodeURIComponent(latestISO));'
+    + 'var data = await res.json();'
+    + 'if (data.messages && data.messages.length > 0) { location.reload(); }'
+    + '}catch(e){}'
+    + '}'
+    + 'setInterval(checkNewMessages, 5000);'
+    + '</script>'
+    + '</body></html>');
+});
+
+// 特定ユーザーの新着チェック用API（詳細画面の自動更新から呼ばれる）
+router.get('/:senderId/latest-check', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  try {
+    const snapshot = await db.collection('messages')
+      .where('senderId', '==', req.params.senderId)
+      .orderBy('createdAt', 'desc')
+      .limit(1)
+      .get();
+    const latestISO = (!snapshot.empty && snapshot.docs[0].data().createdAt)
+      ? snapshot.docs[0].data().createdAt.toDate().toISOString() : '';
+    res.json({ latestISO });
+  } catch (err) {
+    res.json({ latestISO: '', error: err.message });
+  }
 });
 
 // ユーザー詳細
@@ -97,6 +130,8 @@ router.get('/:senderId', requireAuth, async (req, res) => {
   const senderPicture = firstData.senderPicture || null;
   const totalCount = msgSnapshot.size;
   const unreadCount = msgSnapshot.docs.filter(d => d.data().status === '未対応').length;
+  const lastMsgData = msgSnapshot.docs[msgSnapshot.docs.length - 1].data();
+  const detailLatestISO = lastMsgData.createdAt ? lastMsgData.createdAt.toDate().toISOString() : '';
 
   const messages = msgSnapshot.docs.map(doc => {
     const d = doc.data();
@@ -341,6 +376,21 @@ async function sendNewMessage() {
 }
 
 window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
+
+var __detailLatestISO = '${detailLatestISO}';
+async function checkDetailNewMessages() {
+  try {
+    var res = await fetch('/admin/contacts/${senderId}/latest-check');
+    var data = await res.json();
+    if (data.latestISO && data.latestISO !== __detailLatestISO) {
+      // 入力中のメッセージが消えないよう、作成中の下書きがある間はリロードを見送る
+      var draft = document.getElementById('newMsgJa');
+      if (draft && draft.value.trim()) return;
+      location.reload();
+    }
+  } catch(e) {}
+}
+setInterval(checkDetailNewMessages, 5000);
 </script>`;
 
   res.send('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
