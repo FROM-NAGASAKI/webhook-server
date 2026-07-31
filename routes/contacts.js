@@ -224,6 +224,34 @@ function applyTemplate(selectEl, textareaId) {
   selectEl.value = '';
 }
 
+function setupFileDropPaste() {
+  document.querySelectorAll('.drop-zone').forEach(function(zone) {
+    if (zone.dataset.dropPasteBound) return;
+    zone.dataset.dropPasteBound = '1';
+    var fileInput = document.getElementById(zone.dataset.fileInput);
+    if (!fileInput) return;
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.style.borderColor = '#2980b9'; zone.style.background = '#f0f7ff'; });
+    zone.addEventListener('dragleave', function(e) { zone.style.borderColor = '#ccc'; zone.style.background = ''; });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault(); zone.style.borderColor = '#ccc'; zone.style.background = '';
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) { fileInput.files = e.dataTransfer.files; }
+    });
+    zone.addEventListener('paste', function(e) {
+      var items = (e.clipboardData || window.clipboardData).items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          var file = items[i].getAsFile();
+          var dt = new DataTransfer(); dt.items.add(file);
+          fileInput.files = dt.files;
+          e.preventDefault(); break;
+        }
+      }
+    });
+  });
+}
+setupFileDropPaste();
+
 var __surveysCache = null;
 async function loadSurveyOptionsInto(selectEl) {
   if (__surveysCache) return;
@@ -457,10 +485,10 @@ setInterval(checkDetailNewMessages, 5000);
     + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="en"> 英語訳</label>'
     + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="newMsgLang" value="both"> 両方送信</label>'
     + '</div>'
-    + '<div style="margin-bottom:12px;">'
+    + '<div class="drop-zone" data-file-input="newMsgFile" style="margin-bottom:12px;border:2px dashed #ccc;border-radius:6px;padding:12px;">'
     + '<label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
     + '<input type="file" id="newMsgFile" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
-    + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
+    + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）／ このエリアにドラッグ＆ドロップ、または画像をコピーしてCtrl+V（Macは⌘+V）で貼り付けもできます</small>'
     + '</div>'
     + '<button onclick="sendNewMessage()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">📤 送信</button>'
     + '<span id="newMsgResult" style="margin-left:12px;font-weight:bold;font-size:14px;"></span>'

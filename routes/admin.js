@@ -201,10 +201,10 @@ router.get('/', requireAuth, async (req, res) => {
         + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + formId + '" value="en"> 英語訳</label>'
         + '<label style="font-size:13px;margin-left:12px;cursor:pointer;"><input type="radio" name="lang-' + formId + '" value="both"> 両方送信</label>'
         + '</div>'
-        + '<div style="margin-bottom:8px;">'
+        + '<div class="drop-zone" data-file-input="file-' + formId + '" style="margin-bottom:8px;border:2px dashed #ccc;border-radius:6px;padding:10px;">'
         + '<label style="font-size:13px;color:#555;font-weight:bold;">📎 添付ファイル：</label>'
         + '<input type="file" id="file-' + formId + '" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style="font-size:13px;margin-left:8px;">'
-        + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）</small>'
+        + '<small style="color:#888;display:block;margin-top:4px;">画像・PDF・Word・Excel（最大25MB）／ ドラッグ＆ドロップ・貼り付け(Ctrl+V)にも対応</small>'
         + '</div>'
         + '<small style="color:#888;margin-top:4px;display:block;">※ 送信時に署名が自動付加されます</small>'
         + '<div style="margin-top:10px;">'
@@ -268,6 +268,34 @@ router.get('/', requireAuth, async (req, res) => {
 var latestISO = '${latestISO}';
 
 var __templatesCache = null;
+function setupFileDropPaste() {
+  document.querySelectorAll('.drop-zone').forEach(function(zone) {
+    if (zone.dataset.dropPasteBound) return;
+    zone.dataset.dropPasteBound = '1';
+    var fileInput = document.getElementById(zone.dataset.fileInput);
+    if (!fileInput) return;
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.style.borderColor = '#2980b9'; zone.style.background = '#f0f7ff'; });
+    zone.addEventListener('dragleave', function(e) { zone.style.borderColor = '#ccc'; zone.style.background = ''; });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault(); zone.style.borderColor = '#ccc'; zone.style.background = '';
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) { fileInput.files = e.dataTransfer.files; }
+    });
+    zone.addEventListener('paste', function(e) {
+      var items = (e.clipboardData || window.clipboardData).items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          var file = items[i].getAsFile();
+          var dt = new DataTransfer(); dt.items.add(file);
+          fileInput.files = dt.files;
+          e.preventDefault(); break;
+        }
+      }
+    });
+  });
+}
+setupFileDropPaste();
+
 async function loadTemplatesInto(selectEl) {
   if (__templatesCache) return; // 一度読み込んだら再取得しない
   try {
