@@ -45,6 +45,9 @@ router.get('/', requireAuth, async (req, res) => {
       <div id="questionList"></div>
       <button type="button" onclick="addQuestion()" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;margin-bottom:12px;">➕ 質問を追加</button>
       <br>
+      <label>アンケートの前に送る一言（任意）</label>
+      <textarea id="newPreComment" rows="3" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;" placeholder="例：いつもお疲れ様です。今月のアンケートにご協力をお願いします。"></textarea>
+      <div style="font-size:12px;color:#888;margin-top:-6px;margin-bottom:10px;">※ 入力すると、送信のたびにアンケート本編の前に、この内容を1通のメッセージとして自動で送ります。空欄なら送りません。</div>
       <label>アンケート完了時に送るメッセージ</label>
       <textarea id="newCompletionMessage" rows="6" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;">Thank you for your response.
 If you have anything you’d like to discuss, please write it in this message.
@@ -95,11 +98,12 @@ If your work or personal circumstances change, please feel free to contact me vi
       if (!title) { msg.textContent = '△ タイトルを入力してください'; msg.style.color = 'orange'; return; }
       if (questions.length === 0) { msg.textContent = '△ 質問を1つ以上入力してください'; msg.style.color = 'orange'; return; }
       var completionMessage = document.getElementById('newCompletionMessage').value;
+      var preComment = document.getElementById('newPreComment').value.trim();
       msg.textContent = '作成中...'; msg.style.color = 'gray';
       try {
         var res = await fetch('/admin/surveys/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage })
+          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage, preComment: preComment })
         });
         var data = await res.json();
         if (data.success) { msg.textContent = '✅ 作成しました'; msg.style.color = 'green'; setTimeout(function(){ location.reload(); }, 800); }
@@ -145,7 +149,7 @@ router.get('/list-json', requireAuth, async (req, res) => {
 router.post('/create', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { title, questions, completionMessage } = req.body;
+  const { title, questions, completionMessage, preComment } = req.body;
   if (!title || !questions || questions.length === 0) {
     return res.json({ success: false, error: 'タイトルと質問が必要です' });
   }
@@ -153,6 +157,7 @@ router.post('/create', requireAuth, async (req, res) => {
     await db.collection('surveys').add({
       title, questions,
       completionMessage: completionMessage || '',
+      preComment: preComment || '',
       createdBy: req.session.adminDisplayName || '管理者',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -178,6 +183,9 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
       <div id="questionList"></div>
       <button type="button" onclick="addQuestion()" style="background:#95a5a6;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;margin-bottom:12px;">➕ 質問を追加</button>
       <br>
+      <label>アンケートの前に送る一言（任意）</label>
+      <textarea id="editPreComment" rows="3" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;" placeholder="例：いつもお疲れ様です。今月のアンケートにご協力をお願いします。">${(survey.preComment || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+      <div style="font-size:12px;color:#888;margin-top:-6px;margin-bottom:10px;">※ 入力すると、送信のたびにアンケート本編の前に、この内容を1通のメッセージとして自動で送ります。空欄なら送りません。</div>
       <label>アンケート完了時に送るメッセージ</label>
       <textarea id="editCompletionMessage" rows="6" style="padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;margin-bottom:10px;">${(survey.completionMessage || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
       <button onclick="updateSurvey()" style="background:#2980b9;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:15px;font-weight:bold;">💾 更新を保存</button>
@@ -224,11 +232,12 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
       });
       if (!title || questions.length === 0) { msg.textContent = '△ タイトルと質問を入力してください'; msg.style.color = 'orange'; return; }
       var completionMessage = document.getElementById('editCompletionMessage').value;
+      var preComment = document.getElementById('editPreComment').value.trim();
       msg.textContent = '保存中...'; msg.style.color = 'gray';
       try {
         var res = await fetch('/admin/surveys/${req.params.surveyId}/update', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage })
+          body: JSON.stringify({ title: title, questions: questions, completionMessage: completionMessage, preComment: preComment })
         });
         var data = await res.json();
         if (data.success) { msg.textContent = '✅ 保存しました'; msg.style.color = 'green'; }
@@ -242,7 +251,7 @@ router.get('/:surveyId/edit', requireAuth, async (req, res) => {
 router.post('/:surveyId/update', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { title, questions, completionMessage } = req.body;
+  const { title, questions, completionMessage, preComment } = req.body;
   if (!title || !questions || questions.length === 0) {
     return res.json({ success: false, error: 'タイトルと質問が必要です' });
   }
@@ -250,6 +259,7 @@ router.post('/:surveyId/update', requireAuth, async (req, res) => {
     await db.collection('surveys').doc(req.params.surveyId).update({
       title, questions,
       completionMessage: completionMessage || '',
+      preComment: preComment || '',
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
     res.json({ success: true });
@@ -281,6 +291,7 @@ router.post('/:surveyId/duplicate', requireAuth, async (req, res) => {
       title: (survey.title || '無題') + '（コピー）',
       questions: survey.questions || [],
       completionMessage: survey.completionMessage || '',
+      preComment: survey.preComment || '',
       createdBy: req.session.adminDisplayName || '管理者',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -344,11 +355,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
     <div class="card">
       <p style="margin:0;color:#555;">「<strong>${survey.title}</strong>」（全${(survey.questions||[]).length}問）を送信します。</p>
       <p style="font-size:13px;color:#888;">※ ${HUMAN_AGENT_APPROVED ? 'HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。7日を超えるユーザーは送信できません。' : 'HUMAN_AGENTタグは現在Meta側の承認待ちのため、最終メッセージから24時間以内のユーザーにのみ送信可能です。'}</p>
-    </div>
-    <div class="card">
-      <label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">💬 アンケートの前に送る一言（任意）</label>
-      <textarea id="preComment" rows="3" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;resize:vertical;" placeholder="例：いつもお疲れ様です。今月のアンケートにご協力をお願いします。"></textarea>
-      <div style="font-size:12px;color:#888;margin-top:4px;">※ 入力すると、アンケート本編が始まる前に、この内容だけを先に1通のメッセージとして送信します。空欄の場合は送りません。</div>
+      ${survey.preComment ? '<div style="margin-top:10px;padding:10px 12px;background:#eaf4fb;border-radius:6px;font-size:13px;color:#2c3e50;"><strong>💬 アンケートの前に自動送信される一言：</strong><br>' + survey.preComment.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + '<br><span style="color:#888;font-size:12px;">※ この内容を変更したい場合は「✏️ 編集」画面から変更してください。</span></div>' : ''}
     </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
       <label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"> 全選択/解除</label>
@@ -366,9 +373,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
       var over7dUsers = [...document.querySelectorAll("input[name='targets']:checked")].filter(function(c){ var row=c.closest('tr'); return row && row.querySelector('.badge-over7d'); }).map(function(c){ var row=c.closest('tr'); return row.querySelector('strong').textContent; });
       if (over7dUsers.length > 0) { alert('⚠️ 以下のユーザーは送信可能期間を超えているため送信できません。\\n' + over7dUsers.join('\\n')); return; }
       if (targets.length === 0) { alert('送信対象を選択してください'); return; }
-      var comment = document.getElementById('preComment').value.trim();
-      var confirmMsg = targets.length + '名に送信します。' + (comment ? '\\n（アンケートの前に一言メッセージも送信されます）' : '') + '\\nよろしいですか？';
-      if (!confirm(confirmMsg)) return;
+      if (!confirm(targets.length + '名に送信します。よろしいですか？')) return;
       var btn = document.getElementById('sendBtn'); btn.disabled = true; btn.textContent = '送信中...';
       var resultArea = document.getElementById('resultArea');
       resultArea.innerHTML = '';
@@ -378,7 +383,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
         try {
           var res = await fetch('/admin/surveys/${surveyId}/send-one', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ senderId: senderId, comment: comment })
+            body: JSON.stringify({ senderId: senderId })
           });
           var data = await res.json();
           var row = document.querySelector("input[value='" + senderId + "']").closest('tr');
@@ -398,12 +403,14 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
 router.post('/:surveyId/send-one', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { senderId, comment } = req.body;
+  const { senderId } = req.body;
   try {
-    // アンケート本編の前に一言メッセージがあれば先に送る（本文が届かなければアンケートも開始しない）
-    if (comment && comment.trim()) {
+    // アンケート本編の前に、テンプレートに登録された一言があれば先に送る（本文が届かなければアンケートも開始しない）
+    const surveyDoc = await db.collection('surveys').doc(req.params.surveyId).get();
+    const preComment = surveyDoc.exists ? (surveyDoc.data().preComment || '') : '';
+    if (preComment.trim()) {
       try {
-        await sendMessage(senderId, comment.trim(), 'HUMAN_AGENT');
+        await sendMessage(senderId, preComment.trim(), 'HUMAN_AGENT');
       } catch (commentErr) {
         const fbError = commentErr.response && commentErr.response.data && commentErr.response.data.error;
         console.error('アンケート前コメント送信エラー:', senderId, fbError ? JSON.stringify(fbError) : commentErr.message);
