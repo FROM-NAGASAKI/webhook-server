@@ -5,6 +5,15 @@ const { navHtml, commonCss, avatarHtml } = require('../helpers/html');
 const { startSurvey } = require('../helpers/surveyEngine');
 const { HUMAN_AGENT_APPROVED } = require('../helpers/facebook');
 
+// CSV用のフィールドエスケープ（カンマ・改行・ダブルクォートを含む場合は "" で囲む）
+function csvField(value) {
+  const s = (value === undefined || value === null) ? '' : String(value);
+  if (/[",\n\r]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
 // アンケート一覧
 router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
@@ -363,6 +372,55 @@ router.post('/:surveyId/send-one', requireAuth, async (req, res) => {
   }
 });
 
+// 結果のCSVダウンロード（回答者ごとの生データ。Excelでそのまま開けます）
+router.get('/:surveyId/results/export.csv', requireAuth, async (req, res) => {
+  try {
+    const db = req.app.get('db');
+    const surveyId = req.params.surveyId;
+    const surveyDoc = await db.collection('surveys').doc(surveyId).get();
+    if (!surveyDoc.exists) return res.status(404).send('アンケートが見つかりません');
+    const survey = surveyDoc.data();
+    const questions = survey.questions || [];
+
+    const [responsesSnapshot, contactsSnapshot] = await Promise.all([
+      db.collection('surveyResponses').where('surveyId', '==', surveyId).get(),
+      db.collection('contacts').get()
+    ]);
+    const responses = responsesSnapshot.docs.map(d => d.data());
+    const contacts = {};
+    contactsSnapshot.docs.forEach(doc => { contacts[doc.id] = doc.data(); });
+
+    const headerCols = ['名前', 'アンケート内容', '回答'];
+    const lines = [headerCols.map(csvField).join(',')];
+
+    responses.forEach(r => {
+      const profile = contacts[r.senderId] || {};
+      const name = profile.passportName || r.senderName || '不明(' + r.senderId.slice(-4) + ')';
+
+      questions.forEach(q => {
+        const rawValue = r.answers && r.answers[q.id];
+        if (rawValue === undefined || rawValue === null) return; // 未回答の質問はスキップ
+        const opt = q.options.find(o => o.value === rawValue);
+        const answerLabel = opt ? opt.label : rawValue;
+        lines.push([name, q.text, answerLabel].map(csvField).join(','));
+      });
+    });
+
+    const csvContent = '\uFEFF' + lines.join('\r\n'); // 先頭にBOMを付けてExcelで文字化けしないようにする
+
+    // ファイル名に日本語が含まれるとHTTPヘッダーにそのまま入れられずエラーになるため、
+    // ASCIIの代替名（filename）とUTF-8エンコードした本来の名前（filename*）の両方を指定する（RFC 5987）
+    const rawFileName = (survey.title || 'survey') + '_results.csv';
+    const encodedFileName = encodeURIComponent(rawFileName);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="survey_results.csv"; filename*=UTF-8\'\'' + encodedFileName);
+    res.send(csvContent);
+  } catch (err) {
+    console.error('アンケート結果CSV出力エラー:', err.message);
+    res.status(500).send('CSV出力に失敗しました: ' + err.message);
+  }
+});
+
 // 結果集計画面
 router.get('/:surveyId/results', requireAuth, async (req, res) => {
   const db = req.app.get('db');
@@ -424,8 +482,9 @@ router.get('/:surveyId/results', requireAuth, async (req, res) => {
   }).join('') || '<tr><td colspan="' + (questions.length + 3) + '" style="text-align:center;color:#888;">まだ回答がありません</td></tr>';
 
   res.send(pageShell('📊 結果：' + survey.title, req.session.adminDisplayName, `
-    <div class="card">
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <p style="margin:0;">送信数: <strong>${responses.length}</strong> 件 ／ 回答完了: <strong>${completed.length}</strong> 件</p>
+      <a href="/admin/surveys/${surveyId}/results/export.csv" style="background:#27ae60;color:white;border:none;padding:8px 16px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:bold;">📥 CSVダウンロード（Excelで開けます）</a>
     </div>
     ${questionBlocks}
     <div class="card">
