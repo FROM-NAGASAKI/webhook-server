@@ -31,6 +31,7 @@ router.get('/', requireAuth, async (req, res) => {
       + '<a href="/admin/surveys/' + s.id + '/send" style="padding:6px 12px;background:#2980b9;color:white;border-radius:4px;text-decoration:none;font-size:13px;margin-right:6px;display:inline-block;margin-bottom:4px;">📤 送信</a>'
       + '<a href="/admin/surveys/' + s.id + '/results" style="padding:6px 12px;background:#27ae60;color:white;border-radius:4px;text-decoration:none;font-size:13px;margin-right:6px;display:inline-block;margin-bottom:4px;">📊 結果</a>'
       + '<a href="/admin/surveys/' + s.id + '/edit" style="padding:6px 12px;background:#95a5a6;color:white;border-radius:4px;text-decoration:none;font-size:13px;margin-right:6px;display:inline-block;margin-bottom:4px;">✏️ 編集</a>'
+      + '<button onclick="duplicateSurvey(\'' + s.id + '\')" style="padding:6px 12px;background:#8e44ad;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;margin-right:6px;display:inline-block;margin-bottom:4px;">📄 複製</button>'
       + '<button onclick="deleteSurvey(\'' + s.id + '\')" style="padding:6px 12px;background:#e74c3c;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;display:inline-block;margin-bottom:4px;">🗑️ 削除</button>'
       + '</td>'
       + '</tr>';
@@ -113,6 +114,16 @@ If your work or personal circumstances change, please feel free to contact me vi
         var data = await res.json();
         if (data.success) location.reload();
         else alert('削除失敗: ' + data.error);
+      } catch(e) { alert('エラー: ' + e.message); }
+    }
+
+    async function duplicateSurvey(id) {
+      if (!confirm('このアンケートを複製しますか？（タイトルの末尾に「（コピー）」が付いた新しいアンケートが作成されます）')) return;
+      try {
+        var res = await fetch('/admin/surveys/' + id + '/duplicate', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) location.reload();
+        else alert('複製失敗: ' + data.error);
       } catch(e) { alert('エラー: ' + e.message); }
     }
   `));
@@ -253,6 +264,27 @@ router.post('/:surveyId/delete', requireAuth, async (req, res) => {
   try {
     await db.collection('surveys').doc(req.params.surveyId).delete();
     res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 複製API（タイトル・質問・完了メッセージをコピーして新規アンケートとして作成。回答結果はコピーしない）
+router.post('/:surveyId/duplicate', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const admin = req.app.get('adminSdk');
+  try {
+    const surveyDoc = await db.collection('surveys').doc(req.params.surveyId).get();
+    if (!surveyDoc.exists) return res.json({ success: false, error: '元のアンケートが見つかりません' });
+    const survey = surveyDoc.data();
+    const newDoc = await db.collection('surveys').add({
+      title: (survey.title || '無題') + '（コピー）',
+      questions: survey.questions || [],
+      completionMessage: survey.completionMessage || '',
+      createdBy: req.session.adminDisplayName || '管理者',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    res.json({ success: true, id: newDoc.id });
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
