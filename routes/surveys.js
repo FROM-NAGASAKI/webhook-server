@@ -3,7 +3,7 @@ const router = express.Router();
 const { requireAuth } = require('../helpers/auth');
 const { navHtml, commonCss, avatarHtml } = require('../helpers/html');
 const { startSurvey } = require('../helpers/surveyEngine');
-const { HUMAN_AGENT_APPROVED } = require('../helpers/facebook');
+const { HUMAN_AGENT_APPROVED, sendMessage } = require('../helpers/facebook');
 
 // CSV用のフィールドエスケープ（カンマ・改行・ダブルクォートを含む場合は "" で囲む）
 function csvField(value) {
@@ -345,6 +345,11 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
       <p style="margin:0;color:#555;">「<strong>${survey.title}</strong>」（全${(survey.questions||[]).length}問）を送信します。</p>
       <p style="font-size:13px;color:#888;">※ ${HUMAN_AGENT_APPROVED ? 'HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎたユーザーにも送信可能です。7日を超えるユーザーは送信できません。' : 'HUMAN_AGENTタグは現在Meta側の承認待ちのため、最終メッセージから24時間以内のユーザーにのみ送信可能です。'}</p>
     </div>
+    <div class="card">
+      <label style="font-size:13px;color:#555;font-weight:bold;display:block;margin-bottom:4px;">💬 アンケートの前に送る一言（任意）</label>
+      <textarea id="preComment" rows="3" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;resize:vertical;" placeholder="例：いつもお疲れ様です。今月のアンケートにご協力をお願いします。"></textarea>
+      <div style="font-size:12px;color:#888;margin-top:4px;">※ 入力すると、アンケート本編が始まる前に、この内容だけを先に1通のメッセージとして送信します。空欄の場合は送りません。</div>
+    </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
       <label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"> 全選択/解除</label>
       <button class="send-btn" id="sendBtn" onclick="sendSurvey()" style="background:#e74c3c;color:white;border:none;padding:12px 32px;border-radius:6px;cursor:pointer;font-size:16px;font-weight:bold;">📤 一括送信</button>
@@ -361,7 +366,9 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
       var over7dUsers = [...document.querySelectorAll("input[name='targets']:checked")].filter(function(c){ var row=c.closest('tr'); return row && row.querySelector('.badge-over7d'); }).map(function(c){ var row=c.closest('tr'); return row.querySelector('strong').textContent; });
       if (over7dUsers.length > 0) { alert('⚠️ 以下のユーザーは送信可能期間を超えているため送信できません。\\n' + over7dUsers.join('\\n')); return; }
       if (targets.length === 0) { alert('送信対象を選択してください'); return; }
-      if (!confirm(targets.length + '名に送信します。よろしいですか？')) return;
+      var comment = document.getElementById('preComment').value.trim();
+      var confirmMsg = targets.length + '名に送信します。' + (comment ? '\\n（アンケートの前に一言メッセージも送信されます）' : '') + '\\nよろしいですか？';
+      if (!confirm(confirmMsg)) return;
       var btn = document.getElementById('sendBtn'); btn.disabled = true; btn.textContent = '送信中...';
       var resultArea = document.getElementById('resultArea');
       resultArea.innerHTML = '';
@@ -371,7 +378,7 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
         try {
           var res = await fetch('/admin/surveys/${surveyId}/send-one', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ senderId: senderId })
+            body: JSON.stringify({ senderId: senderId, comment: comment })
           });
           var data = await res.json();
           var row = document.querySelector("input[value='" + senderId + "']").closest('tr');
@@ -391,8 +398,19 @@ router.get('/:surveyId/send', requireAuth, async (req, res) => {
 router.post('/:surveyId/send-one', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
-  const { senderId } = req.body;
+  const { senderId, comment } = req.body;
   try {
+    // アンケート本編の前に一言メッセージがあれば先に送る（本文が届かなければアンケートも開始しない）
+    if (comment && comment.trim()) {
+      try {
+        await sendMessage(senderId, comment.trim(), 'HUMAN_AGENT');
+      } catch (commentErr) {
+        const fbError = commentErr.response && commentErr.response.data && commentErr.response.data.error;
+        console.error('アンケート前コメント送信エラー:', senderId, fbError ? JSON.stringify(fbError) : commentErr.message);
+        return res.json({ success: false, error: '一言メッセージの送信に失敗しました: ' + (fbError ? fbError.message : commentErr.message) });
+      }
+    }
+
     const contactDoc = await db.collection('contacts').doc(senderId).get();
     const contactData = contactDoc.exists ? contactDoc.data() : {};
     await startSurvey(db, admin, senderId, req.params.surveyId, contactData);
