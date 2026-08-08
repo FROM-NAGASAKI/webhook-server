@@ -465,12 +465,34 @@ router.get('/:surveyId/results/export.csv', requireAuth, async (req, res) => {
     const headerCols = ['レコードの開始行', 'レコード番号', '最終更新日', '事業所名', '更新者', '作成者', '更新日時', '作成日時', '氏名', ...questions.map(q => q.text)];
     const lines = [headerCols.map(csvField).join(',')];
 
-    responses.forEach((r, i) => {
+    // 開始日時の早い順に並べる（テーブル内の行の順序をわかりやすくするため）
+    const sortedResponses = responses.slice().sort((a, b) => {
+      const at = a.startedAt ? a.startedAt.toMillis() : 0;
+      const bt = b.startedAt ? b.startedAt.toMillis() : 0;
+      return at - bt;
+    });
+
+    // 1回のアンケート＝Kintoneの1レコードとして扱う。
+    // レコード先頭の情報（事業所名・最終更新日など）は最初の回答者の行だけに入れ、
+    // 2人目以降は氏名・回答（テーブル部分）だけを埋めた継続行として出力する。
+    const recordNumber = '1';
+    let recordUpdatedAt = null; // レコード内で一番新しい回答日時
+    let recordCreatedAt = null; // レコード内で一番古い回答日時（アンケート開始日時）
+    sortedResponses.forEach(r => {
+      const ts = r.completedAt || r.startedAt || null;
+      if (ts) {
+        if (!recordUpdatedAt || ts.toMillis() > recordUpdatedAt.toMillis()) recordUpdatedAt = ts;
+        if (!recordCreatedAt || ts.toMillis() < recordCreatedAt.toMillis()) recordCreatedAt = ts;
+      }
+    });
+    const firstWorkplace = sortedResponses.length > 0
+      ? (contacts[sortedResponses[0].senderId] || {}).workplace || ''
+      : '';
+
+    sortedResponses.forEach((r, i) => {
       const profile = contacts[r.senderId] || {};
       const name = profile.passportName || r.senderName || '不明(' + r.senderId.slice(-4) + ')';
-      const workplace = profile.workplace || '';
-      const createdAt = r.startedAt || r.createdAt || null;
-      const updatedAt = r.completedAt || r.updatedAt || createdAt;
+      const isFirstRow = i === 0;
 
       const answerCols = questions.map(q => {
         const rawValue = r.answers && r.answers[q.id];
@@ -480,16 +502,16 @@ router.get('/:surveyId/results/export.csv', requireAuth, async (req, res) => {
       });
 
       const row = [
-        '*',                      // レコードの開始行
-        String(i + 1),            // レコード番号
-        formatDate(updatedAt),    // 最終更新日
-        workplace,                // 事業所名
-        '',                       // 更新者（空欄）
-        '',                       // 作成者（空欄）
-        formatDateTime(updatedAt),// 更新日時
-        formatDateTime(createdAt),// 作成日時
-        name,                     // 氏名
-        ...answerCols
+        isFirstRow ? '*' : '',                              // レコードの開始行（レコードの最初の行のみ）
+        recordNumber,                                        // レコード番号（同じアンケート内は全行共通）
+        isFirstRow ? formatDate(recordUpdatedAt) : '',        // 最終更新日
+        isFirstRow ? firstWorkplace : '',                     // 事業所名
+        '',                                                   // 更新者（空欄）
+        '',                                                   // 作成者（空欄）
+        isFirstRow ? formatDateTime(recordUpdatedAt) : '',     // 更新日時
+        isFirstRow ? formatDateTime(recordCreatedAt) : '',     // 作成日時
+        name,                                                  // 氏名（テーブルの行ごとに入る）
+        ...answerCols                                          // 回答（テーブルの行ごとに入る）
       ];
       lines.push(row.map(csvField).join(','));
     });
