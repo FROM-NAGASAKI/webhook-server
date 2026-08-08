@@ -8,6 +8,54 @@ const { resolveAllUnread } = require('../helpers/messages');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
+// 会話履歴の初期表示件数（これを超える分は「過去のメッセージを読み込む」ボタンで追加取得する）
+const MESSAGES_PAGE_SIZE = 50;
+
+// 1件分のメッセージ吹き出しHTMLを生成する（初期表示・追加読み込みの両方から呼ばれる共通関数）
+function renderMessageBubble(d, msgId, senderName, senderPicture) {
+  const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
+  const status = d.status || '未対応';
+  const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
+
+  // 管理者送信メッセージは右側（管理者側）に表示
+  if (d.isAdminSent) {
+    const replyText = d.replyMessage || '';
+    const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : date;
+    return '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><div class="chat-bubble" style="max-width:60%;">'
+      + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
+      + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
+      + '<div style="white-space:pre-wrap;">' + replyText + '</div>'
+      + attachmentHtml(d)
+      + '</div></div></div>';
+  }
+
+  let html = '<div style="display:flex;justify-content:flex-start;margin-bottom:8px;gap:8px;">'
+    + avatarHtml(senderName, senderPicture)
+    + '<div class="chat-bubble" style="max-width:60%;">'
+    + '<div style="font-size:12px;color:#888;margin-bottom:4px;">' + senderName + ' · ' + date + '</div>'
+    + '<div id="msg-' + msgId + '" style="background:white;border-radius:0 12px 12px 12px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">' + (d.message || '') + attachmentHtml(d) + '</div>'
+    + '<div style="margin-top:4px;">'
+    + '<button onclick="translateMsg(\'' + msgId + '\')" style="font-size:11px;padding:3px 8px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 日本語訳</button>'
+    + '<span id="trans-status-' + msgId + '" style="font-size:12px;color:#555;margin-left:8px;"></span>'
+    + '</div>'
+    + '<div id="trans-result-' + msgId + '" style="display:none;background:#eaf4fb;border-radius:4px;padding:8px;margin-top:4px;font-size:13px;color:#2c3e50;"></div>'
+    + '<div style="font-size:12px;margin-top:4px;color:' + statusColor + ';">' + status + '</div>'
+    + '</div>';
+
+  if (d.replyAdmin && (d.replyMessage || d.attachmentName)) {
+    const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
+    const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
+    html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div class="chat-bubble" style="max-width:60%;">'
+      + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
+      + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
+      + replyText + attachmentHtml(d)
+      + '</div></div></div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
 // ユーザー一覧
 router.get('/', requireAuth, async (req, res) => {
   const db = req.app.get('db');
@@ -116,6 +164,45 @@ router.get('/:senderId/latest-check', requireAuth, async (req, res) => {
   }
 });
 
+// 会話履歴の追加読み込み用API（「過去のメッセージを読み込む」ボタンから呼ばれる）
+// before: 現在表示中の中で一番古いメッセージのcreatedAt(ISO文字列)。それより前のものを取得する。
+router.get('/:senderId/older-messages', requireAuth, async (req, res) => {
+  const db = req.app.get('db');
+  const senderId = req.params.senderId;
+  const before = req.query.before;
+  if (!before) return res.json({ html: '', hasMore: false, oldestISO: '', error: 'beforeが必要です' });
+
+  try {
+    const beforeDate = new Date(before);
+    const [msgSnapshot, contactDoc] = await Promise.all([
+      db.collection('messages')
+        .where('senderId', '==', senderId)
+        .orderBy('createdAt', 'desc')
+        .startAfter(beforeDate)
+        .limit(MESSAGES_PAGE_SIZE)
+        .get(),
+      db.collection('contacts').doc(senderId).get()
+    ]);
+
+    if (msgSnapshot.empty) return res.json({ html: '', hasMore: false, oldestISO: '' });
+
+    const profile = contactDoc.exists ? contactDoc.data() : {};
+    const sampleData = msgSnapshot.docs[0].data();
+    const senderName = profile.passportName || sampleData.senderName || '不明';
+    const senderPicture = sampleData.senderPicture || null;
+
+    const docsAsc = msgSnapshot.docs.slice().reverse(); // 古い→新しい順に並べ直して表示用にする
+    const html = docsAsc.map(doc => renderMessageBubble(doc.data(), doc.id, senderName, senderPicture)).join('');
+    const oldestData = docsAsc[0].data();
+    const oldestISO = oldestData.createdAt ? oldestData.createdAt.toDate().toISOString() : '';
+    const hasMore = msgSnapshot.size === MESSAGES_PAGE_SIZE;
+
+    res.json({ html, hasMore, oldestISO });
+  } catch (err) {
+    res.json({ html: '', hasMore: false, oldestISO: '', error: err.message });
+  }
+});
+
 // ユーザー詳細
 router.get('/:senderId', requireAuth, async (req, res) => {
   const db = req.app.get('db');
@@ -134,51 +221,19 @@ router.get('/:senderId', requireAuth, async (req, res) => {
   const lastMsgData = msgSnapshot.docs[msgSnapshot.docs.length - 1].data();
   const detailLatestISO = lastMsgData.createdAt ? lastMsgData.createdAt.toDate().toISOString() : '';
 
-  const messages = msgSnapshot.docs.map(doc => {
-    const d = doc.data();
-    const date = d.createdAt ? d.createdAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '不明';
-    const status = d.status || '未対応';
-    const statusColor = status === '未対応' ? '#e74c3c' : '#27ae60';
-    const msgId = doc.id;
+  // 会話履歴のページネーション：直近 MESSAGES_PAGE_SIZE 件だけを初期表示し、
+  // それより古いものは「過去のメッセージを読み込む」ボタンで /:senderId/older-messages から追加取得する
+  const allDocsAsc = msgSnapshot.docs; // 古い→新しい順
+  const hasOlderMessages = allDocsAsc.length > MESSAGES_PAGE_SIZE;
+  const visibleDocs = hasOlderMessages ? allDocsAsc.slice(allDocsAsc.length - MESSAGES_PAGE_SIZE) : allDocsAsc;
+  const oldestVisibleData = visibleDocs[0].data();
+  const oldestVisibleISO = oldestVisibleData.createdAt ? oldestVisibleData.createdAt.toDate().toISOString() : '';
 
-    // 管理者送信メッセージは右側（管理者側）に表示
-    if (d.isAdminSent) {
-      const replyText = d.replyMessage || '';
-      const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : date;
-      return '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><div class="chat-bubble" style="max-width:60%;">'
-        + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
-        + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
-        + '<div style="white-space:pre-wrap;">' + replyText + '</div>'
-        + attachmentHtml(d)
-        + '</div></div></div>';
-    }
+  const loadMoreHtml = hasOlderMessages
+    ? '<div class="chat-history-loadmore" id="loadMoreWrap"><button onclick="loadOlderMessages()">⬆️ 過去のメッセージを読み込む（残り' + (allDocsAsc.length - MESSAGES_PAGE_SIZE) + '件）</button></div>'
+    : '';
 
-    let html = '<div style="display:flex;justify-content:flex-start;margin-bottom:8px;gap:8px;">'
-      + avatarHtml(senderName, senderPicture)
-      + '<div class="chat-bubble" style="max-width:60%;">'
-      + '<div style="font-size:12px;color:#888;margin-bottom:4px;">' + senderName + ' · ' + date + '</div>'
-      + '<div id="msg-' + msgId + '" style="background:white;border-radius:0 12px 12px 12px;padding:10px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">' + (d.message || '') + attachmentHtml(d) + '</div>'
-      + '<div style="margin-top:4px;">'
-      + '<button onclick="translateMsg(\'' + msgId + '\')" style="font-size:11px;padding:3px 8px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">🌐 日本語訳</button>'
-      + '<span id="trans-status-' + msgId + '" style="font-size:12px;color:#555;margin-left:8px;"></span>'
-      + '</div>'
-      + '<div id="trans-result-' + msgId + '" style="display:none;background:#eaf4fb;border-radius:4px;padding:8px;margin-top:4px;font-size:13px;color:#2c3e50;"></div>'
-      + '<div style="font-size:12px;margin-top:4px;color:' + statusColor + ';">' + status + '</div>'
-      + '</div>';
-
-    if (d.replyAdmin && (d.replyMessage || d.attachmentName)) {
-      const repliedAt = d.repliedAt ? d.repliedAt.toDate().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '';
-      const replyText = d.replyMessage ? '<div style="white-space:pre-wrap;">' + d.replyMessage + '</div>' : '';
-      html += '<div style="display:flex;justify-content:flex-end;margin-bottom:24px;"><div class="chat-bubble" style="max-width:60%;">'
-        + '<div style="font-size:12px;color:#888;margin-bottom:4px;text-align:right;">' + (d.replyAdmin || '管理者') + ' · ' + repliedAt + '</div>'
-        + '<div style="background:#dcf8c6;border-radius:12px 0 12px 12px;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">'
-        + replyText + attachmentHtml(d)
-        + '</div></div></div>';
-    }
-
-    html += '</div>';
-    return html;
-  }).join('');
+  const messages = loadMoreHtml + visibleDocs.map(doc => renderMessageBubble(doc.data(), doc.id, senderName, senderPicture)).join('');
 
   const nameCandidateHint = (!profile.passportName && profile.nameCandidate)
     ? '<div style="font-size:12px;color:#e67e22;margin-top:4px;">💡 候補（本人からの返信）：' + profile.nameCandidate + '　※内容を確認の上、そのまま保存もできます</div>'
@@ -404,7 +459,41 @@ async function sendNewMessage() {
   } catch(e) { result.textContent='✗ エラー: '+e.message; result.style.color='red'; }
 }
 
-window.onload = function(){ window.scrollTo(0, document.body.scrollHeight); };
+window.onload = function(){
+  var box = document.getElementById('chatHistoryScroll');
+  if (box) box.scrollTop = box.scrollHeight;
+};
+
+var __oldestLoadedISO = '${oldestVisibleISO}';
+var __loadingOlder = false;
+async function loadOlderMessages() {
+  if (__loadingOlder || !__oldestLoadedISO) return;
+  __loadingOlder = true;
+  var wrap = document.getElementById('loadMoreWrap');
+  var btn = wrap ? wrap.querySelector('button') : null;
+  var box = document.getElementById('chatHistoryScroll');
+  if (btn) { btn.disabled = true; btn.textContent = '読み込み中...'; }
+  try {
+    var res = await fetch('/admin/contacts/${senderId}/older-messages?before=' + encodeURIComponent(__oldestLoadedISO));
+    var data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (data.html && box && wrap) {
+      var prevScrollHeight = box.scrollHeight;
+      wrap.insertAdjacentHTML('afterend', data.html);
+      // 読み込んだ分だけスクロール位置をずらして、表示中のメッセージが飛ばないようにする
+      box.scrollTop = box.scrollTop + (box.scrollHeight - prevScrollHeight);
+    }
+    if (data.oldestISO) __oldestLoadedISO = data.oldestISO;
+    if (data.hasMore) {
+      if (btn) { btn.disabled = false; btn.textContent = '⬆️ 過去のメッセージを読み込む'; }
+    } else if (wrap) {
+      wrap.remove();
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '⬆️ 過去のメッセージを読み込む（再試行）'; }
+  }
+  __loadingOlder = false;
+}
 
 var __detailLatestISO = '${detailLatestISO}';
 async function checkDetailNewMessages() {
@@ -436,6 +525,12 @@ setInterval(checkDetailNewMessages, 5000);
     + 'textarea.profile-textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;resize:vertical;}'
     + 'button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}'
     + '.compose-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}'
+    + '.chat-history-scroll{max-height:65vh;overflow-y:auto;overflow-x:hidden;padding:4px 10px 4px 2px;border:1px solid #eee;border-radius:6px;background:#fafafa;scroll-behavior:auto;}'
+    + '.chat-history-scroll::-webkit-scrollbar{width:8px;}'
+    + '.chat-history-scroll::-webkit-scrollbar-thumb{background:#ccc;border-radius:4px;}'
+    + '.chat-history-loadmore{text-align:center;margin-bottom:10px;}'
+    + '.chat-history-loadmore button{background:#ecf0f1;color:#2c3e50;border:1px solid #ccc;padding:6px 16px;border-radius:16px;cursor:pointer;font-size:13px;}'
+    + '.chat-history-loadmore button:hover{background:#dfe6e9;}'
     + '@media (max-width:768px){'
     + '.container{padding:8px;}'
     + '.card{padding:14px 16px;}'
@@ -445,6 +540,7 @@ setInterval(checkDetailNewMessages, 5000);
     + '.chat-bubble{max-width:85%!important;}'
     + '.chat-bubble,.chat-bubble *{word-break:break-word!important;overflow-wrap:break-word!important;}'
     + 'body{overflow-x:hidden;}'
+    + '.chat-history-scroll{max-height:55vh;}'
     + '}'
     + '</style></head><body>'
     + '<header><h1>💬 ' + senderName + ' の履歴</h1>' + navHtml(req.session.adminDisplayName) + '</header>'
@@ -459,7 +555,9 @@ setInterval(checkDetailNewMessages, 5000);
     + '</div></div>'
     + messengerLinkHtml(senderId)
     + profileHtml
-    + '<div class="card"><h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>' + messages + '</div>'
+    + '<div class="card"><h3 style="margin-top:0;color:#2c3e50;">💬 会話履歴</h3>'
+    + '<div class="chat-history-scroll" id="chatHistoryScroll">' + messages + '</div>'
+    + '</div>'
     + '<div class="card" style="border:2px solid #2980b9;">'
     + '<h3 style="margin-top:0;color:#2980b9;">✉️ 新規メッセージ送信</h3>'
     + '<p style="font-size:13px;color:#888;margin-top:0;">※ HUMAN_AGENTタグを使用するため、最終メッセージから7日以内であれば24時間を過ぎていても送信可能です。</p>'
