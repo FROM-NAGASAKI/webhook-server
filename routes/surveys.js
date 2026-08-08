@@ -429,9 +429,10 @@ router.post('/:surveyId/send-one', requireAuth, async (req, res) => {
   }
 });
 
-// 結果のCSVダウンロード（回答者ごとの生データ。Excelでそのまま開けます）
+// 結果のCSVダウンロード（Kintone等への取込みを想定したワイド形式。Shift-JISで出力）
 router.get('/:surveyId/results/export.csv', requireAuth, async (req, res) => {
   try {
+    const iconv = require('iconv-lite');
     const db = req.app.get('db');
     const surveyId = req.params.surveyId;
     const surveyDoc = await db.collection('surveys').doc(surveyId).get();
@@ -447,31 +448,62 @@ router.get('/:surveyId/results/export.csv', requireAuth, async (req, res) => {
     const contacts = {};
     contactsSnapshot.docs.forEach(doc => { contacts[doc.id] = doc.data(); });
 
-    const headerCols = ['名前', 'アンケート内容', '回答'];
+    // 日時フォーマット用ヘルパー（Firestore Timestamp → 'YYYY/MM/DD' 'YYYY/MM/DD HH:mm'）
+    function formatDate(ts) {
+      if (!ts) return '';
+      const d = ts.toDate();
+      return d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
+    }
+    function formatDateTime(ts) {
+      if (!ts) return '';
+      const d = ts.toDate();
+      const datePart = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timePart = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false });
+      return datePart + ' ' + timePart;
+    }
+
+    const headerCols = ['レコードの開始行', 'レコード番号', '最終更新日', '事業所名', '更新者', '作成者', '更新日時', '作成日時', '氏名', ...questions.map(q => q.text)];
     const lines = [headerCols.map(csvField).join(',')];
 
-    responses.forEach(r => {
+    responses.forEach((r, i) => {
       const profile = contacts[r.senderId] || {};
       const name = profile.passportName || r.senderName || '不明(' + r.senderId.slice(-4) + ')';
+      const workplace = profile.workplace || '';
+      const createdAt = r.startedAt || r.createdAt || null;
+      const updatedAt = r.completedAt || r.updatedAt || createdAt;
 
-      questions.forEach(q => {
+      const answerCols = questions.map(q => {
         const rawValue = r.answers && r.answers[q.id];
-        if (rawValue === undefined || rawValue === null) return; // 未回答の質問はスキップ
+        if (rawValue === undefined || rawValue === null) return '';
         const opt = q.options.find(o => o.value === rawValue);
-        const answerLabel = opt ? opt.label : rawValue;
-        lines.push([name, q.text, answerLabel].map(csvField).join(','));
+        return opt ? opt.label : rawValue;
       });
+
+      const row = [
+        '*',                      // レコードの開始行
+        String(i + 1),            // レコード番号
+        formatDate(updatedAt),    // 最終更新日
+        workplace,                // 事業所名
+        '',                       // 更新者（空欄）
+        '',                       // 作成者（空欄）
+        formatDateTime(updatedAt),// 更新日時
+        formatDateTime(createdAt),// 作成日時
+        name,                     // 氏名
+        ...answerCols
+      ];
+      lines.push(row.map(csvField).join(','));
     });
 
-    const csvContent = '\uFEFF' + lines.join('\r\n'); // 先頭にBOMを付けてExcelで文字化けしないようにする
+    const csvContent = lines.join('\r\n');
+    const sjisBuffer = iconv.encode(csvContent, 'Shift_JIS');
 
     // ファイル名に日本語が含まれるとHTTPヘッダーにそのまま入れられずエラーになるため、
     // ASCIIの代替名（filename）とUTF-8エンコードした本来の名前（filename*）の両方を指定する（RFC 5987）
     const rawFileName = (survey.title || 'survey') + '_results.csv';
     const encodedFileName = encodeURIComponent(rawFileName);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
     res.setHeader('Content-Disposition', 'attachment; filename="survey_results.csv"; filename*=UTF-8\'\'' + encodedFileName);
-    res.send(csvContent);
+    res.send(sjisBuffer);
   } catch (err) {
     console.error('アンケート結果CSV出力エラー:', err.message);
     res.status(500).send('CSV出力に失敗しました: ' + err.message);
