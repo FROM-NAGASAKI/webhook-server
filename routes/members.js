@@ -39,6 +39,7 @@ router.get('/', requireAuth, async (req, res) => {
       senderId: u.senderId,
       name: profile.passportName || u.senderName || '不明',
       picture: u.senderPicture,
+      employmentStatus: profile.employmentStatus || '在職',
       workplace: profile.workplace || '',
       residenceStatus: profile.residenceStatus || '',
       entryDate: profile.entryDate || '',
@@ -65,10 +66,14 @@ router.get('/', requireAuth, async (req, res) => {
   });
 
   // フィルター
+  // 在職状況：クエリ未指定（初回アクセス・リセット時）は「在職」をデフォルトとする。
+  // 空文字（すべて）が明示的に渡された場合はそれを尊重する。
+  const filterEmployment = req.query.employmentStatus !== undefined ? req.query.employmentStatus : '在職';
   const filterWorkplace = req.query.workplace || '';
   const filterResidence = req.query.residence || '';
   const filterKeyword = req.query.keyword || '';
   const filtered = members.filter(m => {
+    if (filterEmployment && m.employmentStatus !== filterEmployment) return false;
     if (filterWorkplace && m.workplace !== filterWorkplace) return false;
     if (filterResidence && m.residenceStatus !== filterResidence) return false;
     if (filterKeyword) {
@@ -88,7 +93,7 @@ router.get('/', requireAuth, async (req, res) => {
   function sortLink(key, label) {
     const newDir = (sortKey === key && sortDir === 'asc') ? 'desc' : 'asc';
     const arrow = sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-    const params = new URLSearchParams({ sort: key, dir: newDir, workplace: filterWorkplace, residence: filterResidence, keyword: filterKeyword });
+    const params = new URLSearchParams({ sort: key, dir: newDir, employmentStatus: filterEmployment, workplace: filterWorkplace, residence: filterResidence, keyword: filterKeyword });
     return `<a href="/admin/members?${params}" style="color:white;text-decoration:none;">${label}${arrow}</a>`;
   }
 
@@ -98,8 +103,10 @@ router.get('/', requireAuth, async (req, res) => {
 
   const rows = filtered.map(m => {
     const unreadBadge = m.unread > 0 ? `<span style="background:#e74c3c;color:white;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;">${m.unread}</span>` : '';
+    const employmentColor = m.employmentStatus === '退職' ? '#e74c3c' : '#27ae60';
     return `<tr onclick="location.href='/admin/contacts/${m.senderId}'" style="cursor:pointer;">
       <td data-label="名前"><div style="display:flex;align-items:center;gap:8px;">${avatarHtml(m.name, m.picture)}<div><strong>${m.name}</strong>${unreadBadge}<div style="font-size:11px;color:#888;">${m.senderId}</div></div></div></td>
+      <td data-label="在職状況"><span style="color:${employmentColor};font-weight:bold;">${m.employmentStatus}</span></td>
       <td data-label="所属事業所">${m.workplace || '—'}</td>
       <td data-label="在留資格">${m.residenceStatus || '—'}</td>
       <td data-label="入国日">${m.entryDate || '—'}</td>
@@ -148,6 +155,11 @@ tr:hover td{background:#f0f7ff;}
     <input type="hidden" name="dir" value="${sortDir}">
     <div class="filter-bar">
       <input type="text" name="keyword" value="${filterKeyword}" placeholder="🔍 キーワード検索（名前・事業所・備考・タグ）" style="flex:1;min-width:200px;">
+      <select name="employmentStatus">
+        <option value="在職" ${filterEmployment === '在職' ? 'selected' : ''}>在職</option>
+        <option value="退職" ${filterEmployment === '退職' ? 'selected' : ''}>退職</option>
+        <option value="" ${filterEmployment === '' ? 'selected' : ''}>すべて</option>
+      </select>
       <select name="workplace">
         <option value="">すべての事業所</option>
         ${workplaceOptions}
@@ -167,6 +179,7 @@ tr:hover td{background:#f0f7ff;}
   <table>
     <thead><tr>
       <th>${sortLink('name', '名前')}</th>
+      <th>${sortLink('employmentStatus', '在職状況')}</th>
       <th>${sortLink('workplace', '所属事業所')}</th>
       <th>${sortLink('residenceStatus', '在留資格')}</th>
       <th>${sortLink('entryDate', '入国日')}</th>

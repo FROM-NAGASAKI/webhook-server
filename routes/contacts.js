@@ -243,6 +243,10 @@ router.get('/:senderId', requireAuth, async (req, res) => {
     + '<h3 style="margin-top:0;color:#2c3e50;">📝 プロフィール情報</h3>'
     + '<div class="profile-grid">'
     + '<div><label>パスポートネーム</label><input type="text" id="passportName" value="' + (profile.passportName || profile.nameCandidate || '') + '" placeholder="例：MURAKAMI TARO">' + nameCandidateHint + '</div>'
+    + '<div><label>在職状況</label><select id="employmentStatus">'
+    + '<option value="在職"' + ((profile.employmentStatus || '在職') === '在職' ? ' selected' : '') + '>在職</option>'
+    + '<option value="退職"' + (profile.employmentStatus === '退職' ? ' selected' : '') + '>退職</option>'
+    + '</select></div>'
     + '<div><label>所属事業所</label><input type="text" id="workplace" value="' + (profile.workplace || '') + '" placeholder="例：株式会社FROM長崎"></div>'
     + '<div><label>在留資格</label><input type="text" id="residenceStatus" value="' + (profile.residenceStatus || '') + '" placeholder="例：技能実習"></div>'
     + '<div><label>入国日</label><input type="date" id="entryDate" value="' + (profile.entryDate || '') + '"></div>'
@@ -398,6 +402,7 @@ async function saveProfile() {
   msg.textContent='保存中...'; msg.style.color='gray';
   var data = {
     passportName: document.getElementById('passportName').value.trim(),
+    employmentStatus: document.getElementById('employmentStatus').value,
     workplace: document.getElementById('workplace').value.trim(),
     residenceStatus: document.getElementById('residenceStatus').value.trim(),
     entryDate: document.getElementById('entryDate').value,
@@ -521,7 +526,7 @@ setInterval(checkDetailNewMessages, 5000);
     + '.user-info .label{font-size:12px;color:#888;} .user-info .value{font-size:15px;font-weight:bold;}'
     + '.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:600px;}'
     + 'label{display:block;margin-bottom:4px;font-size:13px;color:#555;font-weight:bold;}'
-    + 'input[type=text],input[type=date]{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}'
+    + 'input[type=text],input[type=date],.profile-grid select{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;}'
     + 'textarea.profile-textarea{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;width:100%;box-sizing:border-box;resize:vertical;}'
     + 'button.save{background:#2980b9;color:white;border:none;padding:9px 20px;border-radius:4px;cursor:pointer;font-size:14px;margin-top:8px;}'
     + '.compose-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}'
@@ -747,12 +752,12 @@ router.post('/:senderId/profile', requireAuth, async (req, res) => {
   const db = req.app.get('db');
   const admin = req.app.get('adminSdk');
   const { senderId } = req.params;
-  const { passportName, workplace, residenceStatus, entryDate, searchTags, notes } = req.body;
+  const { passportName, employmentStatus, workplace, residenceStatus, entryDate, searchTags, notes } = req.body;
   try {
     // 注意：senderName（FBアカウント名）は登録名で上書きしない。
     // 「FB名」と「登録名」は別物として管理するため、messagesドキュメントは更新しない。
     await db.collection('contacts').doc(senderId).set(
-      { passportName, workplace, residenceStatus, entryDate, searchTags, notes, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { passportName, employmentStatus: employmentStatus || '在職', workplace, residenceStatus, entryDate, searchTags, notes, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
     res.json({ success: true });
